@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>足球预测助手 - 设置</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Microsoft YaHei', sans-serif;
+    font-size: 14px;
+    background: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+  }
+  .container { max-width: 680px; margin: 0 auto; padding: 24px 20px; }
+
+  .page-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #58a6ff;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #30363d;
+  }
+
+  .section {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #c9d1d9;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group:last-child { margin-bottom: 0; }
+
+  label {
+    display: block;
+    font-size: 12px;
+    color: #8b949e;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .label-hint { color: #484f58; font-weight: 400; margin-left: 6px; }
+
+  input[type="text"],
+  input[type="password"],
+  input[type="number"],
+  select,
+  textarea {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    padding: 8px 12px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+    font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #58a6ff; }
+  input::placeholder, textarea::placeholder { color: #484f58; }
+  textarea { resize: vertical; min-height: 80px; }
+
+  .radio-group { display: flex; gap: 8px; flex-wrap: wrap; }
+  .radio-card {
+    flex: 1;
+    min-width: 120px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .radio-card:hover { border-color: #58a6ff40; }
+  .radio-card.selected { border-color: #58a6ff; background: #131d2e; }
+  .radio-card input[type="radio"] { display: none; }
+  .radio-label { font-size: 13px; font-weight: 600; color: #c9d1d9; }
+  .radio-sub { font-size: 11px; color: #484f58; }
+
+  .toggle-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid #21262d;
+  }
+  .toggle-group:last-child { border-bottom: none; }
+  .toggle-info .toggle-title { font-size: 13px; font-weight: 600; color: #c9d1d9; }
+  .toggle-info .toggle-desc { font-size: 11px; color: #484f58; margin-top: 2px; }
+  .toggle {
+    position: relative;
+    width: 42px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: #30363d;
+    border-radius: 22px;
+    cursor: pointer;
+    transition: 0.3s;
+  }
+  .toggle-slider:before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 3px;
+    top: 3px;
+    background: #8b949e;
+    border-radius: 50%;
+    transition: 0.3s;
+  }
+  .toggle input:checked + .toggle-slider { background: #238636; }
+  .toggle input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+    background: #fff;
+  }
+
+  .row { display: flex; gap: 12px; }
+  .row .form-group { flex: 1; }
+
+  .btn {
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.2s;
+  }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
+  .btn-secondary:hover { border-color: #58a6ff; color: #58a6ff; }
+  .btn-danger { background: #21262d; border: 1px solid #f85149; color: #f85149; }
+  .btn-danger:hover { background: #2d1a1a; }
+
+  .actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #30363d;
+  }
+  .actions-left { display: flex; gap: 8px; }
+
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: #238636;
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    transition: transform 0.3s ease;
+    z-index: 100;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #c0392b; }
+
+  .model-hint {
+    background: #131d2e;
+    border: 1px solid #1f6feb;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #79c0ff;
+    line-height: 1.6;
+  }
+
+  code {
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+    color: #f0883e;
+  }
+
+  .key-display {
+    position: relative;
+  }
+  .key-display .eye-btn {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #8b949e;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px;
+  }
+  .key-display input { padding-right: 32px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="page-title">
+    <span>⚽</span> 足球预测助手 · 设置
+  </div>
+
+  <!-- AI 配置 -->
+  <div class="section">
+    <div class="section-title">✨ AI 预测配置</div>
+
+    <div class="form-group">
+      <label>AI 提供商</label>
+      <div class="radio-group" id="providerGroup">
+        <label class="radio-card selected" data-value="openai">
+          <input type="radio" name="provider" value="openai" checked>
+          <div>
+            <div class="radio-label">OpenAI</div>
+            <div class="radio-sub">GPT-4o / GPT-4</div>
+          </div>
+        </label>
+        <label class="radio-card" data-value="claude">
+          <input type="radio" name="provider" value="claude">
+          <div>
+            <div class="radio-label">Claude</div>
+            <div class="radio-sub">Anthropic</div>
+          </div>
+        </label>
+        <label class="radio-card" data-value="custom">
+          <input type="radio" name="provider" value="custom">
+          <div>
+            <div class="radio-label">自定义</div>
+            <div class="radio-sub">DeepSeek / Ollama</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>API Key <span class="label-hint">（安全存储在本地，不会上传）</span></label>
+      <div class="key-display">
+        <input type="password" id="apiKey" placeholder="sk-..." />
+        <button class="eye-btn" id="eyeBtn" title="显示/隐藏">👁</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="form-group">
+        <label>模型名称 <span class="label-hint">（留空使用默认）</span></label>
+        <input type="text" id="aiModel" placeholder="如: gpt-4o" />
+      </div>
+    </div>
+
+    <div class="form-group" id="customEndpointGroup" style="display:none">
+      <label>自定义 API 地址</label>
+      <input type="text" id="customEndpoint" placeholder="http://localhost:11434/v1/chat/completions" />
+    </div>
+
+    <div class="model-hint" id="modelHint">
+      💡 推荐模型：<code>gpt-4o</code> 或 <code>gpt-4-turbo</code>。分析足球数据需要强推理能力，GPT-4 级别效果最佳。
+    </div>
+  </div>
+
+  <!-- 监控配置 -->
+  <div class="section">
+    <div class="section-title">📡 监控配置</div>
+
+    <div class="row">
+      <div class="form-group">
+        <label>默认轮询间隔（分钟）</label>
+        <select id="defaultInterval">
+          <option value="1">1 分钟（高频）</option>
+          <option value="2" selected>2 分钟（推荐）</option>
+          <option value="5">5 分钟</option>
+          <option value="10">10 分钟（低频）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>盘口变动检测灵敏度</label>
+        <select id="sensitivity">
+          <option value="0.03">高（变化 ≥0.03）</option>
+          <option value="0.05" selected>中（变化 ≥0.05）</option>
+          <option value="0.1">低（变化 ≥0.10）</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">盘口变动通知</div>
+        <div class="toggle-desc">当亚让盘或大小球发生变动时推送桌面通知</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="notifyOddsChange" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">自动生成报告</div>
+        <div class="toggle-desc">每次数据更新后自动整理报告（可直接发给AI）</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="autoReport" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">比赛开始前自动分析</div>
+        <div class="toggle-desc">比赛开始前30分钟自动运行本地预测</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="autoPreMatch">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- 数据源配置 -->
+  <div class="section">
+    <div class="section-title">🌐 数据采集配置</div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">采集赛前分析</div>
+        <div class="toggle-desc">联赛战绩、盘路走势（zq.titan007.com）</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="srcAnalysis" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">采集亚让盘口</div>
+        <div class="toggle-desc">亚盘初盘与即时盘口（vip.titan007.com）</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="srcAsian" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">采集大小球盘口</div>
+        <div class="toggle-desc">进球数初盘与即时盘口</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="srcOverUnder" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">采集角球盘口</div>
+        <div class="toggle-desc">角球初盘与即时盘口</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="srcCorner" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- 预测算法配置 -->
+  <div class="section">
+    <div class="section-title">🤖 本地预测算法权重</div>
+
+    <div class="row">
+      <div class="form-group">
+        <label>澳门盘口权重 <span class="label-hint">（0-10）</span></label>
+        <input type="number" id="weightAo" min="0" max="10" value="5" step="1" />
+      </div>
+      <div class="form-group">
+        <label>升降盘权重 <span class="label-hint">（0-10）</span></label>
+        <input type="number" id="weightUpDown" min="0" max="10" value="3" step="1" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="form-group">
+        <label>水位变化权重 <span class="label-hint">（0-10）</span></label>
+        <input type="number" id="weightWater" min="0" max="10" value="4" step="1" />
+      </div>
+      <div class="form-group">
+        <label>战绩权重 <span class="label-hint">（0-10）</span></label>
+        <input type="number" id="weightStats" min="0" max="10" value="2" step="1" />
+      </div>
+    </div>
+  </div>
+
+  <!-- 操作按钮 -->
+  <div class="actions">
+    <div class="actions-left">
+      <button class="btn btn-danger" id="clearDataBtn">🗑 清除缓存数据</button>
+      <button class="btn btn-secondary" id="exportBtn">📤 导出配置</button>
+    </div>
+    <button class="btn btn-primary" id="saveBtn">💾 保存设置</button>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="options.js"></script>
+</body>
+</html>

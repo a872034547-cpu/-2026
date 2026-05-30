@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Titan007 足球预测助手",
+  "version": "1.0.0",
+  "description": "实时监控球探网盘口数据，自动生成AI分析报告，提供赛前及实时预测",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "clipboardWrite",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "windows"
+  ],
+  "host_permissions": [
+    "https://zq.titan007.com/*",
+    "https://vip.titan007.com/*",
+    "https://live.titan007.com/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "足球预测助手"
+  },
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://zq.titan007.com/analysis/*",
+        "https://vip.titan007.com/AsianOdds_n.aspx*",
+        "https://vip.titan007.com/OverDown_n.aspx*",
+        "https://vip.titan007.com/Corner.aspx*"
+      ],
+      "js": ["js/content-extractor.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

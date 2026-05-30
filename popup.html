@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>足球预测助手</title>
+<style>
+  /* 聊天气泡样式 */
+  .chat-msg { display:flex; flex-direction:column; gap:3px; }
+  .chat-msg.user { align-items:flex-end; }
+  .chat-msg.assistant { align-items:flex-start; }
+  .chat-bubble {
+    max-width: 92%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .chat-msg.user .chat-bubble { background:#1f6feb;color:#fff;border-bottom-right-radius:3px; }
+  .chat-msg.assistant .chat-bubble { background:#161b22;border:1px solid #30363d;color:#e6edf3;border-bottom-left-radius:3px; }
+  .chat-meta { font-size:10px;color:#484f58;padding:0 4px; }
+  .chat-typing { display:flex;align-items:center;gap:6px;color:#8b949e;font-size:12px;padding:4px 0; }
+  .chat-typing .dot { width:6px;height:6px;border-radius:50%;background:#8b949e;animation:chatblink 1.2s infinite; }
+  .chat-typing .dot:nth-child(2){animation-delay:.2s}
+  .chat-typing .dot:nth-child(3){animation-delay:.4s}
+  @keyframes chatblink{0%,100%{opacity:.2}50%{opacity:1}}
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 100%;
+    min-width: 520px;
+    min-height: 400px;
+    font-family: 'Microsoft YaHei', sans-serif;
+    font-size: 13px;
+    background: #0d1117;
+    color: #e6edf3;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #1a2332 0%, #0d1117 100%);
+    border-bottom: 1px solid #30363d;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #58a6ff;
+  }
+  .header-title span { font-size: 20px; }
+  .header-actions { display: flex; gap: 6px; }
+  .icon-btn {
+    background: none;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #8b949e;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 12px;
+    transition: all 0.2s;
+  }
+  .icon-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+
+  /* Input Area */
+  .input-area {
+    padding: 12px 16px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .input-area input {
+    flex: 1;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    padding: 6px 10px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-area input:focus { border-color: #58a6ff; }
+  .input-area input::placeholder { color: #484f58; }
+
+  .btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-blue { background: #1f6feb; color: #fff; }
+  .btn-blue:hover { background: #388bfd; }
+  .btn-orange { background: #9a3412; color: #fff; }
+  .btn-orange:hover { background: #c2410c; }
+  .btn-sm { padding: 4px 8px; font-size: 11px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 0 16px;
+  }
+  .tab {
+    padding: 8px 14px;
+    cursor: pointer;
+    color: #8b949e;
+    font-size: 12px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+  .tab:hover:not(.active) { color: #c9d1d9; }
+
+  /* Content */
+  .content {
+    padding: 12px 16px;
+    max-height: 460px;
+    overflow-y: auto;
+  }
+  .content::-webkit-scrollbar { width: 4px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Monitor List */
+  .monitor-list { display: flex; flex-direction: column; gap: 8px; }
+  .monitor-item {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .monitor-item:hover { border-color: #58a6ff40; }
+  .monitor-info { flex: 1; }
+  .monitor-title { font-weight: 600; color: #e6edf3; font-size: 13px; }
+  .monitor-meta { color: #8b949e; font-size: 11px; margin-top: 3px; }
+  .monitor-badge {
+    background: #1a4b2a;
+    color: #3fb950;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .monitor-actions { display: flex; gap: 4px; }
+
+  /* Data Panel */
+  .data-section {
+    margin-bottom: 12px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .section-header {
+    background: #1c2128;
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 12px;
+    color: #8b949e;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-header:hover { background: #21262d; }
+  .section-body { padding: 10px 12px; }
+
+  /* Odds Table */
+  .odds-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .odds-table th {
+    text-align: center;
+    color: #8b949e;
+    padding: 4px 6px;
+    border-bottom: 1px solid #30363d;
+    font-weight: 500;
+  }
+  .odds-table td {
+    text-align: center;
+    padding: 5px 6px;
+    border-bottom: 1px solid #21262d;
+  }
+  .odds-table tr:last-child td { border-bottom: none; }
+  .odds-table .company { text-align: left; font-weight: 600; color: #58a6ff; }
+  .odds-table .handicap { color: #f0883e; font-weight: 700; }
+  .odds-table .changed { color: #f85149; }
+  .odds-table .up { color: #3fb950; }
+
+  /* Prediction Card */
+  .pred-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .pred-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .pred-title { font-weight: 700; font-size: 14px; color: #e6edf3; }
+  .confidence-badge {
+    background: #1a3a2a;
+    border: 1px solid #3fb950;
+    color: #3fb950;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .confidence-badge.medium { background: #2d2a1a; border-color: #d29922; color: #d29922; }
+  .confidence-badge.low { background: #2d1a1a; border-color: #f85149; color: #f85149; }
+
+  .rec-list { list-style: none; }
+  .rec-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+  }
+  .rec-item:last-child { border-bottom: none; }
+  .rec-market {
+    background: #1f6feb;
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .rec-market.ou { background: #6e40c9; }
+  .rec-market.corner { background: #1a4b2a; color: #3fb950; }
+  .rec-content { flex: 1; color: #c9d1d9; }
+  .rec-hint { color: #8b949e; font-size: 11px; margin-top: 2px; }
+
+  .signal-list { display: flex; flex-direction: column; gap: 4px; }
+  .signal-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: #0d1117;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #c9d1d9;
+  }
+  .signal-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .signal-dot.positive { background: #3fb950; }
+  .signal-dot.negative { background: #f85149; }
+  .signal-dot.neutral { background: #8b949e; }
+
+  .ai-output {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #c9d1d9;
+    white-space: pre-wrap;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  /* Status / Loading */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
+    color: #8b949e;
+    font-size: 12px;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid #30363d;
+    border-top-color: #58a6ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center;
+    padding: 30px 20px;
+    color: #484f58;
+  }
+  .empty-state .emoji { font-size: 32px; margin-bottom: 8px; }
+  .empty-state p { font-size: 12px; line-height: 1.6; }
+
+  .alert {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .alert-info { background: #1f3a5a; border: 1px solid #1f6feb; color: #79c0ff; }
+  .alert-warn { background: #352d10; border: 1px solid #d29922; color: #e3b341; }
+  .alert-error { background: #2d1a1a; border: 1px solid #f85149; color: #ffa198; }
+  .alert-success { background: #1a2d1a; border: 1px solid #3fb950; color: #56d364; }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: #8b949e; }
+  .stat-value { color: #e6edf3; font-weight: 600; }
+  .stat-value.highlight { color: #58a6ff; }
+
+  .copy-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #8b949e;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .copy-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+
+  .interval-select {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #e6edf3;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-title">
+    <span>⚽</span> 足球预测助手
+  </div>
+  <div class="header-actions">
+    <button class="icon-btn" id="refreshBtn" title="刷新数据">↻ 刷新</button>
+    <button class="icon-btn" id="settingsBtn" title="设置">⚙ 设置</button>
+  </div>
+</div>
+
+<div class="input-area">
+  <input type="text" id="matchIdInput" placeholder="输入比赛ID（如 2984554）" />
+  <select class="interval-select" id="intervalSelect">
+    <option value="1">1分钟</option>
+    <option value="2" selected>2分钟</option>
+    <option value="5">5分钟</option>
+    <option value="10">10分钟</option>
+  </select>
+  <button class="btn btn-primary" id="startMonitorBtn">▶ 监控</button>
+  <button class="btn btn-blue" id="fetchOnceBtn">⬇ 采集</button>
+</div>
+
+<div id="alertArea"></div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="monitor">📡 监控</div>
+  <div class="tab" data-tab="data">📊 盘口</div>
+  <div class="tab" data-tab="local">🤖 预测</div>
+  <div class="tab" data-tab="ai">✨ AI</div>
+  <div class="tab" data-tab="report">📋 报告</div>
+  <div class="tab" data-tab="history">🕐 记录</div>
+</div>
+
+<div class="content">
+
+  <!-- 监控列表 Tab -->
+  <div class="tab-panel active" id="tab-monitor">
+    <div class="monitor-list" id="monitorList">
+      <div class="empty-state">
+        <div class="emoji">📡</div>
+        <p>暂无监控任务<br>输入比赛ID并点击"监控"开始</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 盘口数据 Tab -->
+  <div class="tab-panel" id="tab-data">
+    <div id="dataContent">
+      <div class="empty-state">
+        <div class="emoji">📊</div>
+        <p>暂无数据<br>请先选择或采集比赛数据</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 本地预测 Tab -->
+  <div class="tab-panel" id="tab-local">
+    <div id="localPredContent">
+      <div class="empty-state">
+        <div class="emoji">🤖</div>
+        <p>本地预测算法基于盘口变化规律<br>采集数据后点击"本地预测"</p>
+      </div>
+    </div>
+    <div style="padding: 0 0 10px">
+      <button class="btn btn-primary" id="localPredBtn" style="width:100%">🤖 运行本地预测</button>
+    </div>
+  </div>
+
+  <!-- AI 预测 Tab -->
+  <div class="tab-panel" id="tab-ai" style="display:flex;flex-direction:column;height:calc(100vh - 90px)">
+    <!-- 工具栏 -->
+    <div style="display:flex;gap:6px;padding:8px 0 6px;flex-shrink:0">
+      <button class="btn btn-blue" id="aiPredBtn" style="flex:1">✨ 开始AI预测分析</button>
+      <button class="btn btn-sm" id="clearChatBtn" title="清空对话" style="background:#21262d;border:1px solid #30363d;color:#8b949e">🗑️</button>
+      <button class="btn btn-sm" id="copyReportBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e">📋 复制报告</button>
+    </div>
+    <!-- 对话消息区 -->
+    <div id="chatMessages" style="flex:1;overflow-y:auto;padding:4px 0;display:flex;flex-direction:column;gap:10px;min-height:0"></div>
+    <!-- 输入区 -->
+    <div style="flex-shrink:0;padding:8px 0 4px;border-top:1px solid #21262d;display:flex;gap:6px;align-items:flex-end">
+      <textarea id="chatInput" placeholder="继续提问，如：重点分析亚盘走势..." rows="2"
+        style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 8px;font-size:12px;font-family:inherit;resize:none;outline:none;line-height:1.5"></textarea>
+      <button class="btn btn-blue" id="chatSendBtn" style="flex-shrink:0;height:52px;padding:0 14px">发送</button>
+    </div>
+  </div>
+
+  <!-- 预测记录 Tab -->
+  <div class="tab-panel" id="tab-history">
+    <div id="historyContent">
+      <div class="empty-state">
+        <div class="emoji">🕐</div>
+        <p>暂无预测记录<br>运行本地预测后自动保存</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 报告 Tab -->
+  <div class="tab-panel" id="tab-report">
+    <div id="reportContent">
+      <div class="empty-state">
+        <div class="emoji">📋</div>
+        <p>数据报告将在此显示<br>可直接复制发送给 AI</p>
+      </div>
+    </div>
+    <div style="padding: 0 0 10px; display:flex; gap:6px">
+      <button class="btn btn-sm" id="copyMdBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e;flex:1">📋 复制 Markdown</button>
+      <button class="btn btn-sm" id="copyTxtBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e;flex:1">📄 复制纯文本</button>
+    </div>
+    <div style="padding: 0 0 10px">
+      <button class="btn btn-sm" id="debugBtn" style="background:#21262d;border:1px solid #484f58;color:#484f58;width:100%">🔍 调试：查看原始数据结构</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
