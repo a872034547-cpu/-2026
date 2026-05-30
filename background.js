@@ -1,28 +1,28 @@
 // Background Service Worker - Tab注入为主，后台fetch为辅
 
-import { Predictor, PredictionLogger } from './js/predictor.js';
-import { ReportGenerator } from './js/report.js';
-import { AIClient } from './js/ai-client.js';
+import从‘./js/ Predictor .js’导入{Predictor， PredictionLogger}； { Predictor, PredictionLogger } from './js/predictor.js';
+import从‘./js/report.js’中导入{ReportGenerator}； { ReportGenerator } from './js/report.js';
+import从‘./js/ai-client.js’导入{AIClient}； { AIClient } from './js/ai-client.js';
 
-const predictor = new Predictor();
-const reportGen = new ReportGenerator();
-const aiClient = new AIClient();
+constconst predictor = new predictor ()； predictor = new Predictor();
+constconst reportGen = new reportGenerator ()； reportGen = new ReportGenerator();
+constconst aiClient = new AIClient()； aiClient = new AIClient();
 
-let monitorTasks = {};
+let   让monitorTasks = {}； monitorTasks = {};
 let panelWindowId = null; // 固定面板窗口ID
 
 // 点击图标打开固定独立窗口（不会自动消失）
-chrome.action.onClicked.addListener(async () => {
+chromechrome.action.onClicked。addListener(async () => {.action.onClicked.addListener(async () => {
   // 如果窗口已存在，聚焦它
-  if (panelWindowId !== null) {
-    try {
-      await chrome.windows.update(panelWindowId, { focused: true });
-      return;
+  如果(panelwindowwid ！== null) {if (panelWindowId !== null) {
+       尝试{try {
+      等待chrome.windows。update(panelWindowId, {focused: true})；await chrome.windows   窗户   窗户.update(panelWindowId, { focused: true });
+         返回;return;
     } catch {
       panelWindowId = null; // 窗口已关闭，重新创建
     }
   }
-  const win = await chrome.windows.create({
+  const win = await chrome.windows   窗户.create({
     url: chrome.runtime.getURL('popup.html'),
     type: 'popup',
     width: 560,
@@ -32,7 +32,7 @@ chrome.action.onClicked.addListener(async () => {
   });
   panelWindowId = win.id;
   // 监听窗口关闭，清除ID
-  chrome.windows.onRemoved.addListener(function onRemoved(id) {
+  chrome.windows   窗户.onRemoved.addListener(function onRemoved(id) {
     if (id === panelWindowId) {
       panelWindowId = null;
       chrome.windows.onRemoved.removeListener(onRemoved);
@@ -46,7 +46,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (!existing.aiProvider) {
     await chrome.storage.sync.set({
       aiProvider: 'custom',
-      aiApiKey: 'sk-Yo2lBgYwnuXG32iMVvZxvJFpdK1iJ2N5HPzhQZheMe2I5vZK',
+      aiApiKey: '',
       aiCustomEndpoint: 'https://jiuuij.de5.net/v1',
       aiModel: 'grok-4.20-multi-agent-xhigh'
     });
@@ -87,7 +87,7 @@ async function handlePageData(msg, sender) {
 
   await chrome.storage.local.set({ [key]: partial });
 
-  const types = ['analysis', 'asian', 'overunder', 'corner'];
+  const   常量 types = ['analysis', 'asian', 'overunder', 'corner'];
   const filled = types.filter(t => partial[t] && !partial[t].error);
 
   console.log(`[BG] PageData ${matchId}/${dataType}: ${filled.length}/4 ready`);
