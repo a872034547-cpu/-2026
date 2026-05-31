@@ -995,21 +995,21 @@ function renderDailyList() {
     const prof = item.profitability;
     const tierColor = tierColors[m.leagueTier] || '#8b949e';
     const scoreColor = prof?.score >= 65 ? '#3fb950' : prof?.score >= 45 ? '#f0883e' : '#8b949e';
-    const collectingLabel = !item.matchData ? ' <span style="color:#484f58;font-size:10px">未采集</span>' : '';
+    const collectingLabel = !item.matchData ? '<span class="pill-text" style="color:#484f58;font-size:10px">未采集</span>' : '';
     const checked = item.checked ? 'checked' : '';
 
     html += `<div class="data-section" style="margin-bottom:6px" data-match-id="${m.id}">
-      <div class="section-header" style="cursor:default;padding:6px 10px">
-        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+      <div class="section-header daily-row" style="cursor:default;padding:6px 8px">
+        <div class="daily-main">
           <input type="checkbox" class="daily-check" data-id="${m.id}" ${checked} style="accent-color:#58a6ff;cursor:pointer;flex-shrink:0">
-          <span style="color:${tierColor};font-size:10px;background:${tierColor}22;padding:1px 5px;border-radius:3px;white-space:nowrap">${m.leagueTier}</span>
-          <span style="font-size:11px;color:#8b949e;white-space:nowrap">${m.league}</span>
-          <span style="font-weight:600;font-size:12px;color:#e6edf3;white-space:nowrap">${m.home} vs ${m.away}</span>
-          ${m.time ? `<span style="color:#484f58;font-size:10px">${m.time}</span>` : ''}
-          ${m.score ? `<span style="color:#f0883e;font-weight:700;font-size:12px">${m.score}</span>` : ''}
+          <span class="pill-text" style="color:${tierColor};font-size:10px;background:${tierColor}22;padding:1px 5px;border-radius:3px">${escapeHtml(m.leagueTier)}</span>
+          <span class="clip-text" style="font-size:11px;color:#8b949e;max-width:76px" title="${escapeHtml(m.league)}">${escapeHtml(m.league)}</span>
+          <span class="clip-text" style="font-weight:600;font-size:12px;color:#e6edf3;flex:1 1 160px" title="${escapeHtml(m.home)} vs ${escapeHtml(m.away)}">${escapeHtml(m.home)} vs ${escapeHtml(m.away)}</span>
+          ${m.time ? `<span class="pill-text" style="color:#484f58;font-size:10px">${escapeHtml(m.time)}</span>` : ''}
+          ${m.score ? `<span class="pill-text" style="color:#f0883e;font-weight:700;font-size:12px">${escapeHtml(m.score)}</span>` : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-          ${prof ? `<span style="color:${scoreColor};font-size:11px;font-weight:700">${prof.score}分</span>` : collectingLabel}
+        <div class="daily-actions">
+          ${prof ? `<span class="pill-text" style="color:${scoreColor};font-size:11px;font-weight:700">${prof.score}分</span>` : collectingLabel}
           <button class="btn btn-sm" style="background:#1f6feb22;border:1px solid #1f6feb;color:#58a6ff;font-size:10px" data-action="dailyViewMatch" data-id="${m.id}">盘口</button>
           <button class="btn btn-sm" style="background:#23863622;border:1px solid #238636;color:#3fb950;font-size:10px" data-action="dailyStartMonitor" data-id="${m.id}" data-home="${escapeHtml(m.home)}" data-away="${escapeHtml(m.away)}">监控</button>
         </div>
@@ -1273,24 +1273,35 @@ function renderDailyRecords() {
     const dayHit = dayRecs.filter(r => r.betResult === '✓').length;
     const dayVerified = dayRecs.filter(r => r.betResult).length;
     html += `<div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:#58a6ff;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+      <div class="records-day-head">
         <span>📅 ${date}</span>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div class="records-day-actions">
           <span style="font-size:10px;color:#8b949e">${dayRecs.length}条 命中${dayVerified > 0 ? (dayHit/dayVerified*100).toFixed(0)+'%' : '-'}</span>
           <button class="btn btn-sm" style="font-size:10px;background:#2d1a1a;border:1px solid #f85149;color:#f85149;padding:2px 6px"
             data-action="deleteByDate" data-date="${date}">🗑 删除当日</button>
         </div>
       </div>
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <div class="records-table-wrap">
+      <table class="records-table">
+        <colgroup>
+          <col style="width:16%">
+          <col style="width:12%">
+          <col style="width:20%">
+          <col style="width:9%">
+          <col style="width:11%">
+          <col style="width:9%">
+          <col style="width:9%">
+          <col style="width:14%">
+        </colgroup>
         <thead><tr style="color:#8b949e;border-bottom:1px solid #30363d;font-size:10px">
-          <th style="text-align:left;padding:3px 4px;min-width:80px">比赛</th>
-          <th style="text-align:left;padding:3px 4px">盘口</th>
-          <th style="text-align:left;padding:3px 4px">选项</th>
-          <th style="text-align:center;padding:3px 4px">赔率</th>
-          <th style="text-align:center;padding:3px 4px">价值</th>
-          <th style="text-align:center;padding:3px 4px">比分</th>
-          <th style="text-align:center;padding:3px 4px">结果</th>
-          <th style="text-align:center;padding:3px 4px">操作</th>
+          <th style="text-align:left">比赛</th>
+          <th style="text-align:left">盘口</th>
+          <th style="text-align:left">选项</th>
+          <th style="text-align:center">赔率</th>
+          <th style="text-align:center">价值</th>
+          <th style="text-align:center">比分</th>
+          <th style="text-align:center">结果</th>
+          <th style="text-align:center">操作</th>
         </tr></thead><tbody>`;
 
     dayRecs.forEach(rec => {
@@ -1302,39 +1313,41 @@ function renderDailyRecords() {
       const safeId = rec.id.replace(/[^a-z0-9]/gi, '_');
 
       html += `<tr style="border-bottom:1px solid #21262d">
-        <td style="padding:4px;color:#c9d1d9;white-space:nowrap" title="${escapeHtml(matchName)}">${escapeHtml(shortName)}</td>
-        <td style="padding:4px;color:#8b949e;white-space:nowrap;font-size:10px">${escapeHtml(rec.betType)}</td>
-        <td style="padding:4px;color:#e6edf3;white-space:nowrap;font-weight:600">${escapeHtml(rec.selection)}</td>
-        <td style="padding:4px;text-align:center;color:#8b949e;font-size:10px">${escapeHtml(rec.odds||'-')}</td>
-        <td style="padding:4px;text-align:center"><span style="color:${valueColor};font-size:10px;font-weight:600">${escapeHtml(rec.valueLevel)}</span></td>
-        <td style="padding:4px;text-align:center">
+        <td class="clip-text" style="color:#c9d1d9" title="${escapeHtml(matchName)}">${escapeHtml(shortName)}</td>
+        <td class="clip-text" style="color:#8b949e;font-size:10px" title="${escapeHtml(rec.betType)}">${escapeHtml(rec.betType)}</td>
+        <td class="clip-text" style="color:#e6edf3;font-weight:600" title="${escapeHtml(rec.selection)}">${escapeHtml(rec.selection)}</td>
+        <td style="text-align:center;color:#8b949e;font-size:10px">${escapeHtml(rec.odds||'-')}</td>
+        <td style="text-align:center"><span class="pill-text" style="color:${valueColor};font-size:10px;font-weight:600">${escapeHtml(rec.valueLevel)}</span></td>
+        <td style="text-align:center">
           <input type="text" placeholder="比分" value="${escapeHtml(rec.actualScore||'')}"
             id="score_${safeId}"
-            style="width:46px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#e6edf3;padding:2px 3px;font-size:10px;text-align:center">
+            style="width:42px;max-width:100%;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#e6edf3;padding:2px 3px;font-size:10px;text-align:center">
         </td>
-        <td style="padding:4px;text-align:center">
+        <td style="text-align:center">
           <select id="result_${safeId}"
-            style="background:#0d1117;border:1px solid #30363d;border-radius:3px;color:${resultColor};font-size:10px;padding:1px">
+            style="width:42px;max-width:100%;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:${resultColor};font-size:10px;padding:1px">
             <option value="">-</option>
-            <option value="✓" ${rec.betResult==='✓'?'selected':''}>✓ 中</option>
-            <option value="✗" ${rec.betResult==='✗'?'selected':''}>✗ 未中</option>
+            <option value="✓" ${rec.betResult==='✓'?'selected':''}>✓</option>
+            <option value="✗" ${rec.betResult==='✗'?'selected':''}>✗</option>
           </select>
         </td>
-        <td style="padding:4px;text-align:center;white-space:nowrap">
-          ${!rec.betResult ? `<button class="btn btn-sm" style="font-size:10px;padding:2px 5px;background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff"
-            data-action="verifyBetRecord" data-id="${escapeHtml(rec.id)}"
-            data-match-id="${escapeHtml(rec.matchId)}"
-            data-bet-type="${escapeHtml(rec.betType)}"
-            data-selection="${escapeHtml(rec.selection)}">🔍验证</button>` : ''}
-          <button class="btn btn-sm" style="font-size:10px;padding:2px 5px;background:#21262d;border:1px solid #30363d;color:#8b949e;margin-left:2px"
-            data-action="saveBetResult" data-id="${escapeHtml(rec.id)}" data-safe="${safeId}">保存</button>
-          <button class="btn btn-sm" style="font-size:10px;padding:2px 5px;background:#2d1a1a;border:1px solid #f85149;color:#f85149;margin-left:2px"
-            data-action="deleteBetRecord" data-id="${escapeHtml(rec.id)}">删</button>
+        <td style="text-align:center">
+          <div class="records-actions">
+            ${!rec.betResult ? `<button class="btn btn-sm" style="background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff"
+              data-action="verifyBetRecord" data-id="${escapeHtml(rec.id)}"
+              data-match-id="${escapeHtml(rec.matchId)}"
+              data-bet-type="${escapeHtml(rec.betType)}"
+              data-selection="${escapeHtml(rec.selection)}">验</button>` : ''}
+            <button class="btn btn-sm" style="background:#21262d;border:1px solid #30363d;color:#8b949e"
+              data-action="saveBetResult" data-id="${escapeHtml(rec.id)}" data-safe="${safeId}">存</button>
+            <button class="btn btn-sm" style="background:#2d1a1a;border:1px solid #f85149;color:#f85149"
+              data-action="deleteBetRecord" data-id="${escapeHtml(rec.id)}">删</button>
+          </div>
         </td>
       </tr>`;
     });
 
-    html += `</tbody></table></div>`;
+    html += `</tbody></table></div></div>`;
   });
 
   el.innerHTML = html;
