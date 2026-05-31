@@ -28,6 +28,36 @@ export class AIClient {
     }
   }
 
+  /**
+   * 深度预测 (2.0)：
+   *  - 保留原始数据报告（rawReportMarkdown）继续投喂
+   *  - 注入本地量化模型结论（quantMarkdown，含推导过程，仅供参考不可照抄）
+   *  - 注入扩展端联网情报线索（intelMarkdown，需AI交叉核实）
+   *  - 要求AI自行联网检索最新信息，独立综合思考后给出建议
+   * extras: { quantMarkdown, intelMarkdown }
+   */
+  async predictDeep(report, matchId, extras = {}) {
+    const settings = await this._getSettings();
+    if (!settings.apiKey && settings.provider !== 'custom') {
+      return { error: '请先在设置页面配置 AI API Key', needConfig: true };
+    }
+
+    const prompt = this._buildDeepPrompt(report.markdown, extras.quantMarkdown, extras.intelMarkdown);
+
+    try {
+      if (settings.provider === 'openai') {
+        return await this._callOpenAI(prompt, settings, { deep: true });
+      } else if (settings.provider === 'claude') {
+        return await this._callClaude(prompt, settings, { deep: true });
+      } else if (settings.provider === 'custom') {
+        return await this._callCustom(prompt, settings, { deep: true });
+      }
+      return { error: '未知 AI 提供商' };
+    } catch (err) {
+      return { error: `AI 深度调用失败: ${err.message}` };
+    }
+  }
+
   _buildPrompt(reportMarkdown) {
     return `你是一位顶级足球数据分析师团队的负责人，精通亚盘、大小球盘口分析、赔率解读和足球战术分析。
 你拥有以下能力：
@@ -112,19 +142,120 @@ ${reportMarkdown}
 - 重点关注：[最值得投注的1-2个方向，附简要理由]`;
   }
 
-  async _callOpenAI(prompt, settings) {
+  /**
+   * 深度提示词 (2.0)
+   * 三层信息：原始数据报告 + 本地量化结论(带推导) + 联网情报线索。
+   * 核心原则：量化结论与情报均"仅供参考"，AI 必须独立联网核实并批判性思考。
+   */
+  _buildDeepPrompt(rawReportMarkdown, quantMarkdown, intelMarkdown) {
+    const quantBlock = quantMarkdown
+      ? quantMarkdown
+      : '### 📐 本地量化模型参考结论\n> 本场未能生成量化结论（数据不足），请完全依赖原始数据与你的联网检索独立判断。';
+    const intelBlock = intelMarkdown
+      ? intelMarkdown
+      : '### 🌐 扩展端联网情报线索\n> 扩展端未检索到情报，请务必使用你自己的联网搜索能力获取最新伤停/阵容/状态信息。';
+
+    return `你是一位顶级足球数据分析师团队的首席决策人，精通亚盘、大小球、赔率解读、统计建模与战术分析。
+
+# 你的工作方式（务必严格遵守）
+1. **主动联网检索**：你必须使用你的联网搜索能力，主动检索这两支球队的**最新真实信息**——伤停名单、停赛、预计首发、近期状态、教练战术、转会、主客场、天气、动机（保级/争冠/杯赛轮换）等。信息要尽量新（临近开赛日）。
+2. **三类输入分层对待**：
+   - **【原始数据报告】**：来自球探网的盘口/赔率/战绩原始采集数据，这是事实基础，可信度高。
+   - **【本地量化模型参考结论】**：扩展用确定性数学（去水概率、泊松、凯利等）算出的结论，**附带了推导方法**。它只是一个统计视角的参考坐标，**不是答案**。模型基于"进球独立泊松"等简化假设，会系统性忽略伤停、战术、动机等因素。**你要理解它怎么来的，判断它在本场是否成立，可以质疑甚至推翻它**，但若推翻需说明理由。
+   - **【扩展端联网情报线索】**：扩展抓取的公开网页线索，含噪声，**仅供核实参考**。你要用自己的联网搜索交叉验证其真伪与时效。
+3. **独立综合裁决**：综合以上三类信息 + 你的联网检索结果，做出**你自己的**专业判断。当量化模型与实时情报冲突时（如模型看好主胜但主力前锋伤停），以真实情报与你的专业判断为准，并解释取舍逻辑。
+4. **诚实标注**：凡引用具体情报（如"某球员伤停"），尽量标注信息来源/时效；无法核实的要标注"待确认"，绝不编造。
+
+---
+
+# 【原始数据报告】（球探网采集，事实基础）
+${rawReportMarkdown}
+
+---
+
+# ${quantBlock}
+
+---
+
+# ${intelBlock}
+
+---
+
+请先在内部完成联网检索与交叉验证，然后严格按以下格式输出最终报告（结构清晰、有据可依）：
+
+## 🔍 赛前情报核实（务必基于你的最新联网检索）
+- 主队最新动态：[伤停/首发/状态/动机 + 信息来源或时效标注]
+- 客队最新动态：[同上]
+- 关键变量：[影响走势的最关键1-3个因素]
+- 与量化模型的差异：[实时情报是否支持/修正了量化模型的假设？具体说明]
+
+## 🧮 对量化模型的采信判断
+- 去水概率：[是否采信？为什么]
+- 泊松进球模型：[λ估计是否合理？本场是否有模型未捕捉的因素需要修正]
+- 价值识别：[模型标出的价值点，结合情报后是否依然成立]
+
+## 🎯 核心预测
+[一句话核心推荐方向 + 核心逻辑]
+
+## 🏆 全场预测
+### 亚让盘
+- 推荐：[具体方向]
+- ✅ 支持因素 / ⚠️ 风险因素
+- 赔率与盘口解读：[结合水位异动与量化edge]
+- 信心度：[0-100%]
+### 大小球
+- 推荐：[大/小 + 进球线]
+- ✅ 支持 / ⚠️ 风险 / 赔率解读 / 信心度
+### 角球
+- 推荐 + 理由 + 信心度
+
+## 🕐 半场预测
+- 半场亚盘 / 半场大小球 / 半场角球 + 理由 + 信心度
+
+## 🔢 比分预测
+- 给出3个最可能比分及概率（参考但不照抄泊松TopScores，可结合情报调整）+ 依据
+
+## 💰 投注建议（综合裁决，非照抄模型）
+| 投注项目 | 推荐方向 | 当前赔率 | 价值评估 | 建议仓位 |
+|---------|---------|---------|---------|---------|
+| 全场亚盘 | ... | ... | 高/中高/中/低价值 | 低/中/高仓 |
+| 全场大小球 | ... | ... | ... | ... |
+| 全场角球 | ... | ... | ... | ... |
+| 半场亚盘 | ... | ... | ... | ... |
+| 比分 | ... | ... | ... | ... |
+
+> 价值评估须综合"量化edge + 实时情报"给出，并在下方一句话说明你与量化模型结论的异同。
+
+## ⚠️ 风险提示与辩证总结
+- 最大不确定因素 / 数据矛盾点 / 庄家陷阱警示
+- 信息时效说明：[你检索到的情报截至何时]
+
+## 📊 综合评分
+- 数据可靠度：[高/中/低] | 情报充分度：[高/中/低]
+- 综合推荐信心：[0-100%]
+- 重点关注：[最值得关注的1-2个方向 + 理由]`;
+  }
+
+  async _callOpenAI(prompt, settings, opts = {}) {
+    const maxTokens = opts.deep ? 4000 : 2000;
+    const body = {
+      model: settings.model || 'gpt-4o',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: maxTokens,
+      temperature: 0.3
+    };
+    // 深度模式启用联网搜索工具（兼容支持 web_search 的模型，不支持会被忽略）
+    if (opts.deep) {
+      body.tools = [{ type: 'web_search' }];
+      body.tool_choice = 'auto';
+    }
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.apiKey}`
       },
-      body: JSON.stringify({
-        model: settings.model || 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2000,
-        temperature: 0.3
-      })
+      body: JSON.stringify(body)
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -140,7 +271,17 @@ ${reportMarkdown}
     };
   }
 
-  async _callClaude(prompt, settings) {
+  async _callClaude(prompt, settings, opts = {}) {
+    const maxTokens = opts.deep ? 4000 : 2000;
+    const body = {
+      model: settings.model || 'claude-3-5-sonnet-20241022',
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }]
+    };
+    // 深度模式启用 Claude 原生联网搜索工具
+    if (opts.deep) {
+      body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
+    }
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -148,27 +289,27 @@ ${reportMarkdown}
         'x-api-key': settings.apiKey,
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify({
-        model: settings.model || 'claude-3-5-sonnet-20241022',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }]
-      })
+      body: JSON.stringify(body)
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error?.message || `HTTP ${resp.status}`);
     }
     const data = await resp.json();
+    // 联网工具调用会产生多个 content block，需拼接所有 text 块
+    const text = Array.isArray(data.content)
+      ? data.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+      : (data.content?.[0]?.text || '');
     return {
       provider: 'claude',
       model: data.model,
-      content: data.content[0].text,
-      tokens: data.usage?.input_tokens + data.usage?.output_tokens,
+      content: text,
+      tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
       generatedAt: new Date().toISOString()
     };
   }
 
-  async _callCustom(prompt, settings) {
+  async _callCustom(prompt, settings, opts = {}) {
     // 支持自定义 OpenAI 兼容接口（DeepSeek、Ollama、本地模型等）
     // 自动补全 /v1/chat/completions 路径
     let endpoint = (settings.customEndpoint || 'http://localhost:11434').trim();
@@ -197,7 +338,7 @@ ${reportMarkdown}
         body: JSON.stringify({
           model: settings.model || 'deepseek-chat',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 2000,
+          max_tokens: opts.deep ? 4000 : 2000,
           temperature: 0.3,
           stream: false
         })

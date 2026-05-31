@@ -4,6 +4,8 @@ import { Predictor, PredictionLogger } from './js/predictor.js';
 import { ReportGenerator } from './js/report.js';
 import { AIClient } from './js/ai-client.js';
 import { calcProfitabilityScore, parseTodayMatchesFromHtml, buildBatchAIPrompt, parseAIBetAdvice, getLeaguePriority } from './js/daily-analyzer.js';
+import { analyze as quantAnalyze, toMarkdown as quantToMarkdown } from './js/quant-engine.js';
+import { gatherMatchIntel, intelToMarkdown } from './js/web-search.js';
 
 const predictor = new Predictor();
 const reportGen = new ReportGenerator();
@@ -161,6 +163,15 @@ async function handleMessage(msg, sender, sendResponse) {
         const report = reportGen.generate(stored);
         const prediction = await aiClient.predict(report, msg.matchId);
         sendResponse({ ok: true, prediction, reportMarkdown: report.markdown });
+        break;
+      }
+
+      // ===== 深度预测 2.0：原始数据 + 量化模型 + 联网情报 + AI综合裁决 =====
+      case 'AI_PREDICT_DEEP': {
+        const stored = await getStoredData(msg.matchId);
+        if (!stored) { sendResponse({ ok: false, error: '暂无数据，请先采集' }); break; }
+        const result = await runDeepPrediction(stored, msg.matchId);
+        sendResponse(result);
         break;
       }
 
@@ -342,72 +353,23 @@ async function handleMessage(msg, sender, sendResponse) {
       }
 
       case 'VERIFY_BET_RECORD': {
-        // 自动采集比分，判断投注是否命中
+        // 自动采集赛果比分，判断投注是否命中
         const { matchId: vMatchId, betType, selection } = msg;
         try {
-          // 采集analysis页获取比分
-          const analysisData = await extractOneTab(
-            `https://zq.titan007.com/analysis/${vMatchId}cn.htm`, 'analysis'
-          );
-          const score = analysisData?.matchInfo?.score || analysisData?.matchInfo?.currentScore || '';
-          let betResult = '';
-          let autoJudge = '';
-
-          if (score) {
-            const scoreM = score.match(/(\d+)\s*[-:]\s*(\d+)/);
-            if (scoreM) {
-              const homeGoals = parseInt(scoreM[1]);
-              const awayGoals = parseInt(scoreM[2]);
-              const totalGoals = homeGoals + awayGoals;
-              const diff = homeGoals - awayGoals; // 主队净胜球
-
-              const bt = betType.toLowerCase();
-              const sel = selection.replace(/\s+/g, '');
-
-              // 大小球判断
-              if (bt.includes('大小') || bt.includes('over') || bt.includes('大球')) {
-                const lineM = sel.match(/(大|小|over|under)[\s]*([\d.]+)/i);
-                if (lineM) {
-                  const line = parseFloat(lineM[2]);
-                  const isBig = /大|over/i.test(lineM[1]);
-                  if (isBig) betResult = totalGoals > line ? '✓' : totalGoals < line ? '✗' : '';
-                  else betResult = totalGoals < line ? '✓' : totalGoals > line ? '✗' : '';
-                  autoJudge = `总进球${totalGoals}，盘口${line}`;
-                }
-              }
-              // 亚盘判断
-              else if (bt.includes('亚盘') || bt.includes('让球')) {
-                const handicapM = sel.match(/([+-]?[\d.]+)(?:\/[\d.]+)?/);
-                const isHome = /主|home/i.test(sel) || (!/(客|away)/i.test(sel) && !sel.includes('-'));
-                if (handicapM) {
-                  const h = parseFloat(handicapM[1]);
-                  const adjustedDiff = isHome ? diff + h : -diff + h;
-                  if (adjustedDiff > 0) betResult = '✓';
-                  else if (adjustedDiff < 0) betResult = '✗';
-                  autoJudge = `比分${homeGoals}-${awayGoals}，让${h}后差${adjustedDiff.toFixed(2)}`;
-                }
-              }
-              // 角球（需要角球数据，这里只记录比分）
-              else {
-                autoJudge = `比分 ${homeGoals}-${awayGoals}，需手动判断`;
-              }
-            }
-          }
-
-          // 自动保存判断结果
-          if (betResult) {
+          const verifyRes = await verifyBetRecord(vMatchId, betType, selection);
+          // 命中/未中/半赢半输 时自动保存
+          if (verifyRes.betResult) {
             const r2 = await chrome.storage.local.get('bet_records');
             const recs = r2.bet_records || [];
             const rec = recs.find(x => x.matchId === vMatchId &&
               x.betType === betType && x.selection === selection);
             if (rec) {
-              rec.actualScore = score;
-              rec.betResult = betResult;
+              rec.actualScore = verifyRes.score;
+              rec.betResult = verifyRes.betResult;
               await chrome.storage.local.set({ bet_records: recs });
             }
           }
-
-          sendResponse({ ok: true, score, betResult, autoJudge });
+          sendResponse({ ok: true, ...verifyRes });
         } catch (e) {
           sendResponse({ ok: false, error: e.message });
         }
@@ -483,8 +445,8 @@ async function handleMessage(msg, sender, sendResponse) {
       }
 
       case 'AI_DAILY_SINGLE': {
-        // 单场详细分析（用于今日赛事勾选批量）
-        const { matchId: dmId, matchData, matchInfo } = msg;
+        // 单场详细分析（用于今日赛事勾选批量）。deep=true 时走深度编排
+        const { matchId: dmId, matchData, matchInfo, deep } = msg;
         try {
           // 构造与 getStoredData 兼容的结构，用 reportGen 生成报告
           const pseudoStored = {
@@ -506,9 +468,14 @@ async function handleMessage(msg, sender, sendResponse) {
               overunder: matchData?.overunder || {}
             }
           };
-          const report = reportGen.generate(pseudoStored);
-          const prediction = await aiClient.predict(report, dmId);
-          sendResponse({ ok: true, prediction, reportMarkdown: report.markdown });
+          if (deep) {
+            const result = await runDeepPrediction(pseudoStored, dmId, matchData?.recentStats);
+            sendResponse(result);
+          } else {
+            const report = reportGen.generate(pseudoStored);
+            const prediction = await aiClient.predict(report, dmId);
+            sendResponse({ ok: true, prediction, reportMarkdown: report.markdown });
+          }
         } catch (e) {
           sendResponse({ ok: false, error: e.message });
         }
@@ -863,6 +830,12 @@ function extractOneTab(url, dataType) {
               setTimeout(() => tryExtract(attempt + 1), 3000);
               return;
             }
+            // 已有公司但初盘列尚未渲染（无任一公司带初盘）时，给"所有/初"视图激活留出时间再重试
+            if (dataType === 'winDrawWin' && result && Array.isArray(result.companies) && result.companies.length > 0
+                && !result.companies.some(c => c && c.initialWin) && attempt < 3) {
+              setTimeout(() => tryExtract(attempt + 1), 2500);
+              return;
+            }
             clearTimeout(timer);
             finish(result || null, null);
           });
@@ -890,7 +863,46 @@ function extractPageData(dataType) {
     if (freshText.length > text.length) text = freshText;
 
     if (dataType === 'analysis') return extractAnalysis(text, html);
-    if (dataType === 'winDrawWin') return extractWinDrawWin(text, html);
+    if (dataType === 'winDrawWin') {
+      // 百家欧指页默认只渲染"即时"列，初盘列需切到"所有/初"视图或勾选"头尾浮动"才填充。
+      // 在页面上下文里主动触发这些开关，使初盘列渲染出来后再解析（配合 extractOneTab 重试）。
+      try {
+        var activateInitialOdds = function() {
+          var clicked = false;
+          // 1) "头尾浮动"开关（最直接：同时显示初盘+即时）
+          var all = document.querySelectorAll('a,span,label,input,td,th,div,li,b');
+          for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            var t = (el.textContent || '').replace(/\s/g, '');
+            if (t === '头尾浮动' || t === '頭尾浮動') {
+              // 勾选其内/相邻 checkbox 或直接点击
+              var cb = el.querySelector && el.querySelector('input[type=checkbox]');
+              if (cb && !cb.checked) { cb.click(); clicked = true; }
+              else { try { el.click(); clicked = true; } catch (e) {} }
+            }
+          }
+          // 2) 顶部"所有 / 初 / 即"视图：优先点"所有"，其次"初"
+          var pickView = function(label) {
+            for (var j = 0; j < all.length; j++) {
+              var e2 = all[j];
+              var tx = (e2.textContent || '').replace(/\s/g, '');
+              if ((tx === label) && (e2.tagName === 'A' || e2.tagName === 'SPAN' || e2.tagName === 'LABEL' || e2.tagName === 'LI' || e2.onclick || (e2.getAttribute && e2.getAttribute('onclick')))) {
+                try { e2.click(); return true; } catch (e) {}
+              }
+            }
+            return false;
+          };
+          if (pickView('所有') || pickView('初')) clicked = true;
+          // 3) 兜底：调用页面可能存在的全局切换函数
+          ['ShowType', 'showType', 'SetType', 'companyFilter', 'ShowOdds'].forEach(function(fn) {
+            try { if (typeof window[fn] === 'function') { window[fn](0); clicked = true; } } catch (e) {}
+          });
+          return clicked;
+        };
+        activateInitialOdds();
+      } catch (e) { /* 激活失败不影响后续解析 */ }
+      return extractWinDrawWin(text, html);
+    }
     if (dataType === 'winDrawWinStats') return extractWinDrawWinStats(text, html);
     if (dataType === 'asian')    return extractAsian(text, html);
     if (dataType === 'overunder')return extractOverUnder(text, html);
@@ -1982,62 +1994,135 @@ function extractPageData(dataType) {
   // ===================== 滚球实时数据提取 =====================
   function extractLiveData(text, html) {
     const result = {
-      matchInfo: {},
-      liveScore: {},
-      events: [],
+      matchInfo: {},        // home / away / league / kickoff
+      liveScore: {},        // home / away / score / minute / status
+      events: [],           // 进球/红牌事件
+      matchStats: {},       // 本场实时技术统计（射门/射正/控球率/角球...）
+      recentStats: { home: {}, away: {} }, // 近3/近10场技统
+      goalTiming: {},       // 进失球时段（保留扩展）
       asianLive: {},
       ouLive: {},
       suggestions: []
     };
 
-    // 比分
-    const scoreM = text.match(/(\d+)\s*[-:]\s*(\d+)/);
-    if (scoreM) {
-      result.liveScore.home = parseInt(scoreM[1]);
-      result.liveScore.away = parseInt(scoreM[2]);
-      result.liveScore.score = `${scoreM[1]}:${scoreM[2]}`;
+    const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // ---------- 球队名 / 联赛：优先解析 document.title ----------
+    // 形如「全南天龙 VS 首尔衣恋(2026赛季韩K2联)-现场分析-...」
+    const title = document.title || '';
+    let tm = title.match(/^\s*(.+?)\s+VS\s+(.+?)\s*[（(]([^）)]+)[）)]/i);
+    if (tm) {
+      result.matchInfo.home = tm[1].trim();
+      result.matchInfo.away = tm[2].trim();
+      result.matchInfo.league = tm[3].trim();
+    }
+    // 备选：team/Summary 链接（页面顶部主客队链接）
+    if (!result.matchInfo.home) {
+      const tl = Array.from(document.querySelectorAll('a[href*="team/Summary"]'))
+        .map(a => (a.textContent || '').trim())
+        .filter(t => t && t.length >= 2 && t.length <= 16);
+      const uniq = [...new Set(tl)];
+      if (uniq.length >= 2) { result.matchInfo.home = uniq[0]; result.matchInfo.away = uniq[1]; }
+    }
+    const home = result.matchInfo.home || '';
+    const away = result.matchInfo.away || '';
+
+    // 开赛时间：标题或正文里的 yyyy-mm-dd hh:mm
+    const koM = text.match(/(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})/);
+    if (koM) result.matchInfo.kickoff = koM[1];
+
+    // ---------- 比分：用球队名锚定，避免误配日期/赔率/统计 ----------
+    if (home && away) {
+      // 主队名 [分隔] 数字 [分隔] 客队名 [分隔] 数字
+      const re = new RegExp(escRe(home) + '[\\s_:\\-]*?(\\d{1,2})[\\s_]+' + escRe(away) + '[\\s_:\\-]*?(\\d{1,2})');
+      const sm = text.match(re);
+      if (sm) {
+        result.liveScore.home = parseInt(sm[1], 10);
+        result.liveScore.away = parseInt(sm[2], 10);
+        result.liveScore.score = sm[1] + ':' + sm[2];
+      }
+    }
+    // 备选：常见比分节点
+    if (!result.liveScore.score) {
+      const scoreEl = document.querySelector('#mScore, .score, .bf, .LiveScore, .scoreboard');
+      if (scoreEl) {
+        const m = (scoreEl.textContent || '').match(/(\d{1,2})\s*[-:]\s*(\d{1,2})/);
+        if (m) {
+          result.liveScore.home = parseInt(m[1], 10);
+          result.liveScore.away = parseInt(m[2], 10);
+          result.liveScore.score = m[1] + ':' + m[2];
+        }
+      }
     }
 
-    // 比赛时间（分钟）
-    const minM = text.match(/(\d{1,3})['\s]*分/);
-    if (minM) result.liveScore.minute = parseInt(minM[1]);
-
-    // 半场/全场
-    if (/半场|上半场/.test(text)) result.liveScore.period = '上半场';
-    else if (/下半场/.test(text)) result.liveScore.period = '下半场';
-    else if (/加时/.test(text)) result.liveScore.period = '加时';
-    else if (/完场|全场/.test(text)) result.liveScore.period = '完场';
-
-    // 进球事件
-    const goalRe = /(\d{1,3})['\s]分.*?([^\n]{2,15})进球/g;
-    let gm;
-    while ((gm = goalRe.exec(text)) !== null) {
-      result.events.push({ type: 'goal', minute: gm[1], player: gm[2] });
+    // ---------- 比赛状态 / 进行分钟 ----------
+    if (/完场|完場|已结束/.test(text)) result.liveScore.status = '完场';
+    else if (/中场|中場|半场休息/.test(text)) result.liveScore.status = '中场';
+    else {
+      const minM = text.match(/(\d{1,3})\s*['′’]/);
+      if (minM) { result.liveScore.minute = parseInt(minM[1], 10); result.liveScore.status = '进行中'; }
+      else result.liveScore.status = '未开始';
     }
 
-    // 红牌
-    const redRe = /(\d{1,3})['\s]分.*?([^\n]{2,15})红牌/g;
-    let rm;
-    while ((rm = redRe.exec(text)) !== null) {
-      result.events.push({ type: 'redcard', minute: rm[1], player: rm[2] });
+    // ---------- 本场实时技术统计 ----------
+    // 截取「本场技术统计」区块，减少与近期技统/盘口的误配
+    let statText = text;
+    const blkM = text.match(/本场技术统计([\s\S]{0,800}?)(技统数据|进失球概率|首发阵容|半场\/全场)/);
+    if (blkM) statText = blkM[1];
+    // [中文标签, 输出键]，长标签优先，匹配后从片段中移除避免子串重复命中
+    const statDefs = [
+      ['半场角球', 'halfCorner'], ['半场控球率', 'halfPossession'],
+      ['危险进攻', 'dangerAttack'], ['射门不中', 'shotOff'],
+      ['控球率', 'possession'], ['任意球', 'freeKick'],
+      ['角球', 'corner'], ['射正', 'shotOn'], ['射门', 'shot'],
+      ['进攻', 'attack'], ['犯规', 'foul'], ['越位', 'offside'],
+      ['黄牌', 'yellow'], ['红牌', 'red']
+    ];
+    statDefs.forEach(([label, key]) => {
+      const re = new RegExp('(\\d+%?)\\s*' + label + '\\s*(\\d+%?)');
+      const m = statText.match(re);
+      if (m && !result.matchStats[key]) {
+        result.matchStats[key] = { label, home: m[1], away: m[2] };
+        statText = statText.replace(m[0], ' '); // 移除已命中片段
+      }
+    });
+
+    // ---------- 进球/红牌事件 ----------
+    const evRe = /(\d{1,3})\s*['′’]\s*(入球|进球|乌龙球|点球|两黄变红|红牌)/g;
+    let em;
+    while ((em = evRe.exec(text)) !== null) {
+      const kind = em[2];
+      const type = /红/.test(kind) ? 'card' : 'goal';
+      result.events.push({ minute: parseInt(em[1], 10), type, kind });
     }
 
-    // 实时亚盘（从页面表格提取当前让球）
+    // ---------- 近期技统（近3 / 近10 场） ----------
+    // 行格式：home3 home10 标签 away3 away10
+    const recentDefs = ['进球', '失球', '被射门', '角球', '黄牌', '犯规', '控球率'];
+    recentDefs.forEach(label => {
+      const re = new RegExp('([\\d.]+%?)\\s+([\\d.]+%?)\\s*' + label + '\\s*([\\d.]+%?)\\s+([\\d.]+%?)');
+      const m = text.match(re);
+      if (m) {
+        result.recentStats.home[label] = { n3: m[1], n10: m[2] };
+        result.recentStats.away[label] = { n3: m[3], n10: m[4] };
+      }
+    });
+
+    // ---------- 实时亚盘 / 大小球（从表格保守提取） ----------
     const tables = document.querySelectorAll('table');
     tables.forEach(tbl => {
       const rows = Array.from(tbl.querySelectorAll('tr'));
       rows.forEach(row => {
-        const cells = Array.from(row.querySelectorAll('td')).map(c => c.innerText.trim());
+        const cells = Array.from(row.querySelectorAll('td')).map(c => (c.innerText || '').trim());
         if (cells.length < 3) return;
-        // 让球识别
-        const handicapM = cells.join('').match(/([+-]?\d+(?:\.\d+)?)\s*([01]\.\d{2})\s*([01]\.\d{2})/);
-        if (handicapM && !result.asianLive.handicap) {
+        const joined = cells.join(' ');
+        const handicapM = joined.match(/([+-]?\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s+([01]\.\d{2})\s+([01]\.\d{2})/);
+        if (handicapM && !result.asianLive.handicap && /让|盘|半|球|平/.test(joined)) {
           result.asianLive.handicap = handicapM[1];
           result.asianLive.homeWater = handicapM[2];
           result.asianLive.awayWater = handicapM[3];
         }
-        // 大小球识别
-        const ouM = cells.join('').match(/(\d+(?:\.\d+)?)\s*大\s*([01]\.\d{2})\s*小\s*([01]\.\d{2})/);
+        const ouM = joined.match(/(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s*[大]\s*([01]\.\d{2})\s*[小]\s*([01]\.\d{2})/);
         if (ouM && !result.ouLive.line) {
           result.ouLive.line = ouM[1];
           result.ouLive.overWater = ouM[2];
@@ -2046,14 +2131,222 @@ function extractPageData(dataType) {
       });
     });
 
-    // 主客队名
-    const teamM = text.match(/([^\s\n]{2,12})\s*(?:vs|VS|对)\s*([^\s\n]{2,12})/);
-    if (teamM) { result.matchInfo.home = teamM[1]; result.matchInfo.away = teamM[2]; }
-
     result._fetchTime = Date.now();
     result._textLen = text.length;
     return result;
   }
+}
+
+// ===== 深度预测编排 (2.0) =====
+// 流程：原始数据报告 → 本地量化模型 → 联网情报检索 → AI综合裁决
+// 任一辅助环节失败都不阻断主流程，AI 仍可基于原始数据 + 自身联网完成预测。
+async function runDeepPrediction(stored, matchId, recentStats) {
+  const steps = { quant: false, intel: false };
+  let quantResult = null, quantMd = '', intelResult = null, intelMd = '';
+
+  // 1) 生成原始数据报告（事实基础）
+  const report = reportGen.generate(stored);
+
+  // 2) 本地量化模型（确定性数学，带推导说明）
+  try {
+    const md = stored?.data || stored;
+    const matchData = {
+      winDrawWin: md.winDrawWin || {},
+      asian: md.asian || {},
+      overunder: md.overunder || {}
+    };
+    // 近期场均：优先用传入的 recentStats，否则尝试从 live 缓存读取
+    let rs = recentStats;
+    if (!rs) {
+      const liveCache = await chrome.storage.local.get(`live_${matchId}`);
+      rs = liveCache[`live_${matchId}`]?.data?.recentStats || null;
+    }
+    quantResult = quantAnalyze(matchData, rs);
+    quantMd = quantToMarkdown(quantResult);
+    steps.quant = !!quantResult;
+  } catch (e) {
+    console.warn('[BG] 量化分析失败:', e.message);
+    quantMd = '### 📐 本地量化模型参考结论\n> 量化计算异常（' + e.message + '），请依赖原始数据独立判断。';
+  }
+
+  // 3) 联网情报检索（多源降级，失败不阻断）
+  try {
+    const mi = report.structured?.matchInfo || stored?.data?.analysis?.matchInfo || {};
+    const home = mi.home || report.structured?.home;
+    const away = mi.away || report.structured?.away;
+    const league = mi.league || '';
+    intelResult = await gatherMatchIntel({ home, away, league });
+    intelMd = intelToMarkdown(intelResult);
+    steps.intel = !!(intelResult && intelResult.ok);
+  } catch (e) {
+    console.warn('[BG] 情报检索失败:', e.message);
+    intelMd = intelToMarkdown(null);
+  }
+
+  // 4) AI 深度综合裁决（保留原始数据 + 量化参考 + 情报，启用模型联网）
+  const prediction = await aiClient.predictDeep(report, matchId, {
+    quantMarkdown: quantMd,
+    intelMarkdown: intelMd
+  });
+
+  return {
+    ok: !prediction?.error,
+    error: prediction?.error,
+    needConfig: prediction?.needConfig,
+    prediction,
+    reportMarkdown: report.markdown,
+    quant: quantResult,
+    quantMarkdown: quantMd,
+    intel: intelResult,
+    intelMarkdown: intelMd,
+    steps
+  };
+}
+
+// ===== 战绩验证：采集赛果比分 + 判断盘口命中 =====
+// 比分来源优先级：滚球/现场分析页(liveScore，完场后即最终比分) → analysis页兜底
+async function verifyBetRecord(matchId, betType, selection) {
+  let score = '';
+  let homeGoals = NaN, awayGoals = NaN;
+  let scoreSource = '';
+
+  // 1) 现场分析页（detail/{id}sb.htm）：extractLiveData 可靠返回 liveScore.score 与完场状态
+  try {
+    const live = await collectLiveData(matchId);
+    const ls = live?.liveScore;
+    if (ls && (ls.score || (isFinite(ls.home) && isFinite(ls.away)))) {
+      if (isFinite(ls.home) && isFinite(ls.away)) {
+        homeGoals = ls.home; awayGoals = ls.away;
+      } else {
+        const m = String(ls.score).match(/(\d{1,2})\s*[-:]\s*(\d{1,2})/);
+        if (m) { homeGoals = parseInt(m[1], 10); awayGoals = parseInt(m[2], 10); }
+      }
+      if (isFinite(homeGoals) && isFinite(awayGoals)) {
+        score = `${homeGoals}:${awayGoals}`;
+        scoreSource = 'detail现场分析页';
+      }
+    }
+  } catch (e) { /* 继续兜底 */ }
+
+  // 2) 兜底：analysis 页文本里搜"完(主-客)"或顶部比分
+  if (!score) {
+    try {
+      const dbg = await extractOneTab(`https://zq.titan007.com/analysis/${matchId}cn.htm`, 'debug');
+      const sample = (dbg?.textSample || '') + ' ' + (dbg?.title || '');
+      const m = sample.match(/完\s*\(?\s*(\d{1,2})\s*[-:]\s*(\d{1,2})\s*\)?/) ||
+                sample.match(/(\d{1,2})\s*[-:]\s*(\d{1,2})/);
+      if (m) {
+        homeGoals = parseInt(m[1], 10); awayGoals = parseInt(m[2], 10);
+        score = `${homeGoals}:${awayGoals}`;
+        scoreSource = 'analysis页兜底';
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (!score || !isFinite(homeGoals) || !isFinite(awayGoals)) {
+    return { ok: false, score: '', betResult: '', autoJudge: '',
+      error: '未能获取赛果比分（可能比赛未结束，或页面结构变化）' };
+  }
+
+  const totalGoals = homeGoals + awayGoals;
+  const diff = homeGoals - awayGoals; // 主队净胜球
+  const bt = String(betType || '').toLowerCase();
+  const sel = String(selection || '').replace(/\s+/g, '');
+
+  let betResult = '';
+  let autoJudge = '';
+
+  // 解析盘口数值，支持 0.25 / 0.5 / 0.75 / 平半(0.25) / 半一(0.75) 等
+  const parseHandicapValue = (s) => {
+    // 中文盘口词 → 数值
+    const cnMap = {
+      '平手': 0, '平': 0, '平半': 0.25, '半球': 0.5, '半': 0.5,
+      '半一': 0.75, '一球': 1, '一球半': 1.25, '球半': 1.5, '一球半/两球': 1.75,
+      '两球': 2, '两球半': 2.5, '三球': 3
+    };
+    for (const k of Object.keys(cnMap).sort((a, b) => b.length - a.length)) {
+      if (s.includes(k)) return cnMap[k];
+    }
+    // 数字盘口：a/b 取均值（如 0/0.5=0.25, 0.5/1=0.75）
+    const frac = s.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+    if (frac) return (parseFloat(frac[1]) + parseFloat(frac[2])) / 2;
+    const single = s.match(/([+-]?\d+(?:\.\d+)?)/);
+    if (single) return parseFloat(single[1]);
+    return NaN;
+  };
+
+  // 走盘判定工具：对 adjusted（让球后净胜）判定输赢，支持 ±0.25 半赢半输
+  const judgeQuarter = (adjusted) => {
+    if (adjusted >= 0.5) return '✓';
+    if (adjusted <= -0.5) return '✗';
+    if (adjusted === 0.25) return '◐'; // 半赢
+    if (adjusted === -0.25) return '◑'; // 半输
+    if (adjusted === 0) return '➖';     // 走盘退款
+    return adjusted > 0 ? '✓' : '✗';
+  };
+
+  if (bt.includes('大小') || bt.includes('over') || /大球|小球|进球数/.test(bt) || /大|小|over|under/i.test(sel)) {
+    // 大小球
+    const isBig = /大|over/i.test(sel) || /大|over/i.test(bt);
+    const isSmall = /小|under/i.test(sel) || /小|under/i.test(bt);
+    const line = parseHandicapValue(sel.replace(/大|小|over|under/gi, ''));
+    if (isFinite(line)) {
+      // 整数线可能走盘
+      const adj = totalGoals - line;
+      let r;
+      const q = (line * 4) % 2; // .25/.75 盘口标志
+      if (q !== 0) {
+        // 半球类，无走盘
+        r = adj > 0 ? (isBig ? '✓' : '✗') : (isBig ? '✗' : '✓');
+      } else if (adj === 0) {
+        r = '➖'; // 正好等于整数线，走盘
+      } else {
+        r = adj > 0 ? (isBig ? '✓' : '✗') : (isBig ? '✗' : '✓');
+      }
+      betResult = isSmall && !isBig
+        ? (r === '✓' ? '✓' : r === '✗' ? '✗' : r)
+        : r;
+      autoJudge = `总进球${totalGoals}，盘口${line}（${isBig ? '大' : '小'}）→ ${betResult}`;
+    } else {
+      autoJudge = `比分${homeGoals}-${awayGoals}，大小盘口无法解析，请手动判断`;
+    }
+  } else if (bt.includes('亚盘') || bt.includes('让球') || bt.includes('让') || /主|客|home|away/i.test(sel)) {
+    // 亚盘让球
+    const isHome = /主|home/i.test(sel) || (!/(客|away)/i.test(sel) && /^[+-]/.test(sel) === false && diff >= 0);
+    // 让球方向：选项里带"-"或"受让"语义
+    let h = parseHandicapValue(sel);
+    if (!isFinite(h)) {
+      autoJudge = `比分${homeGoals}-${awayGoals}，让球盘口无法解析，请手动判断`;
+    } else {
+      // 选项中显式符号：如"主-0.5"表示主让0.5；"主+0.25"主受让
+      const signM = sel.match(/([+-])\s*\d/);
+      let signed = h;
+      if (signM) signed = (signM[1] === '-' ? -1 : 1) * Math.abs(h);
+      else if (/受让|\+/.test(sel)) signed = Math.abs(h);
+      else signed = -Math.abs(h); // 默认让出
+      // adjusted = （主队净胜 if 押主，否则客队净胜） + 让球
+      const base = isHome ? diff : -diff;
+      const adjusted = base + signed;
+      betResult = judgeQuarter(Math.round(adjusted * 4) / 4);
+      const sideLabel = isHome ? '主' : '客';
+      autoJudge = `比分${homeGoals}-${awayGoals}，押${sideLabel}让${signed}，校正后${adjusted.toFixed(2)} → ${betResult}`;
+    }
+  } else if (/胜平负|独赢|主胜|客胜|平局/.test(bt) || /主胜|客胜|平局|和/.test(sel)) {
+    // 胜平负
+    const wantHome = /主胜|主赢/.test(sel) || /主胜/.test(bt);
+    const wantAway = /客胜|客赢/.test(sel) || /客胜/.test(bt);
+    const wantDraw = /平|和/.test(sel) || /平局/.test(bt);
+    const actual = diff > 0 ? 'home' : diff < 0 ? 'away' : 'draw';
+    if (wantHome) betResult = actual === 'home' ? '✓' : '✗';
+    else if (wantAway) betResult = actual === 'away' ? '✓' : '✗';
+    else if (wantDraw) betResult = actual === 'draw' ? '✓' : '✗';
+    autoJudge = `比分${homeGoals}-${awayGoals}（${actual === 'home' ? '主胜' : actual === 'away' ? '客胜' : '平局'}） → ${betResult}`;
+  } else {
+    // 角球/其它：仅返回比分，提示手动
+    autoJudge = `比分 ${homeGoals}-${awayGoals}（来源:${scoreSource}），该盘口类型需手动判断`;
+  }
+
+  return { ok: true, score, betResult, autoJudge, scoreSource };
 }
 
 // ===== 滚球实时数据采集 =====

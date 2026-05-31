@@ -148,6 +148,8 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   #tab-ai.active { display: flex; }
+  /* AI对话Tab激活时，内容区不滚动，由对话消息区内部滚动，输入框固定底部 */
+  .content:has(#tab-ai.active) { max-height: none; overflow: hidden; padding-bottom: 0; }
 
   /* Monitor List */
   .monitor-list { display: flex; flex-direction: column; gap: 8px; }
@@ -378,6 +380,7 @@
 <div class="header">
   <div class="header-title">
     <span>⚽</span> 足球预测助手
+    <span style="font-size:11px;font-weight:normal;color:#8b949e;margin-left:8px">交流QQ群：312732445</span>
   </div>
   <div class="header-actions">
     <button class="icon-btn" id="refreshBtn" title="刷新数据">↻ 刷新</button>
@@ -489,10 +492,11 @@
   <!-- AI 预测 Tab -->
   <div class="tab-panel" id="tab-ai" style="flex-direction:column;height:calc(100vh - 90px)">
     <!-- 工具栏 -->
-    <div style="display:flex;gap:6px;padding:8px 0 6px;flex-shrink:0">
-      <button class="btn btn-blue" id="aiPredBtn" style="flex:1">✨ 开始AI预测分析</button>
+    <div style="display:flex;gap:6px;padding:8px 0 6px;flex-shrink:0;flex-wrap:wrap">
+      <button class="btn btn-blue" id="aiDeepBtn" style="flex:1;min-width:140px">🧠 深度预测(量化+联网)</button>
+      <button class="btn btn-sm" id="aiPredBtn" title="快速预测（仅原始数据）" style="background:#21262d;border:1px solid #30363d;color:#8b949e">⚡ 快速</button>
       <button class="btn btn-sm" id="clearChatBtn" title="清空对话" style="background:#21262d;border:1px solid #30363d;color:#8b949e">🗑️</button>
-      <button class="btn btn-sm" id="copyReportBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e">📋 复制报告</button>
+      <button class="btn btn-sm" id="copyReportBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e">📋</button>
     </div>
     <!-- 对话消息区 -->
     <div id="chatMessages" style="flex:1;overflow-y:auto;padding:4px 0;display:flex;flex-direction:column;gap:10px;min-height:0"></div>

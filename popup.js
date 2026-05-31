@@ -60,6 +60,7 @@ function initButtons() {
   document.getElementById('fetchOnceBtn').addEventListener('click', fetchOnce);
   document.getElementById('localPredBtn').addEventListener('click', runLocalPredict);
   document.getElementById('aiPredBtn').addEventListener('click', runAIPredict);
+  document.getElementById('aiDeepBtn')?.addEventListener('click', runDeepAIPredict);
   document.getElementById('refreshBtn').addEventListener('click', async () => {
     if (currentMatchId) await loadDataForMatch(currentMatchId);
     await loadMonitorList();
@@ -384,6 +385,55 @@ async function runAIPredict() {
   } finally {
     setLoading('aiPredBtn', false);
   }
+}
+
+// ===== 深度预测 2.0：量化模型 + 联网情报 + AI综合裁决 =====
+async function runDeepAIPredict() {
+  const matchId = currentMatchId || getMatchId();
+  if (!matchId) { showAlert('请先输入比赛ID', 'warn'); return; }
+  setLoading('aiDeepBtn', true);
+  appendChatMsg('user', '🧠 深度预测：本地量化建模 + 联网情报检索 + AI综合裁决');
+  appendDeepTyping();
+  try {
+    const resp = await sendMsg({ type: 'AI_PREDICT_DEEP', matchId });
+    removeTyping();
+    if (resp.ok) {
+      chatReportMarkdown = resp.reportMarkdown || '';
+      // 先展示量化与情报来源摘要（让用户看到结论从何而来）
+      const steps = resp.steps || {};
+      const stepNote = `量化模型 ${steps.quant ? '✅' : '⚠️未生成'} · 联网情报 ${steps.intel ? '✅' : '⚠️未检索到'}`;
+      if (resp.quantMarkdown) appendChatMsg('assistant', resp.quantMarkdown, '📐 本地量化参考（确定性数学，供AI参考非照抄）');
+      if (resp.intel && resp.intel.ok) {
+        const srcLines = (resp.intel.gathered || []).slice(0, 6)
+          .map((r, i) => `${i + 1}. ${r.title} — ${r.url}`).join('\n');
+        appendChatMsg('assistant', srcLines || '（无来源）', '🌐 扩展端联网情报来源（仅供AI核实）');
+      }
+      // AI 最终裁决
+      chatHistory = [{ role: 'assistant', content: resp.prediction.content }];
+      const model = resp.prediction.model || resp.prediction.provider || 'AI';
+      const tokens = resp.prediction.tokens ? ` | ${resp.prediction.tokens} tokens` : '';
+      appendChatMsg('assistant', resp.prediction.content, `🧠 ${model}${tokens} · ${stepNote} · ${new Date().toLocaleTimeString('zh-CN')}`);
+    } else if (resp.error?.includes('API Key')) {
+      appendChatMsg('assistant', '⚠️ 请先在设置页面配置 AI API Key\n点击右上角 ⚙ 进行配置');
+    } else {
+      appendChatMsg('assistant', `❌ ${resp.error || 'AI深度预测失败'}`);
+    }
+  } catch (e) {
+    removeTyping();
+    appendChatMsg('assistant', `❌ ${e.message}`);
+  } finally {
+    setLoading('aiDeepBtn', false);
+  }
+}
+
+function appendDeepTyping() {
+  const el = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  div.id = 'chatTyping';
+  div.innerHTML = `<div class="chat-typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:4px">量化建模 → 联网检索情报 → AI综合分析中（约需20-60秒）...</span></div>`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
 }
 
 async function sendChatMessage() {
@@ -1048,7 +1098,8 @@ async function runBatchAI() {
           type: 'AI_DAILY_SINGLE',
           matchId: m.id,
           matchData: item.matchData,
-          matchInfo: { home: m.home, away: m.away, league: m.league, time: m.time }
+          matchInfo: { home: m.home, away: m.away, league: m.league, time: m.time },
+          deep: true   // 2.0：批量也走深度编排（量化+联网情报+AI裁决）
         });
         if (resp.ok && resp.prediction?.content) {
           item.aiResult = { content: resp.prediction.content, reportMarkdown: resp.reportMarkdown };
@@ -1180,10 +1231,15 @@ function renderDailyRecords() {
   else if (resultFilter === 'pending') records = records.filter(r => !r.betResult);
 
   const total = allBetRecords.length;
-  const verified = allBetRecords.filter(r => r.betResult).length;
+  // 走盘(➖)不计入有效验证；半赢◐/半输◑按0.5计入命中率
+  const settled = allBetRecords.filter(r => r.betResult && r.betResult !== '➖');
+  const verified = settled.length;
   const hitCount = allBetRecords.filter(r => r.betResult === '✓').length;
   const missCount = allBetRecords.filter(r => r.betResult === '✗').length;
-  const hitRate = verified > 0 ? ((hitCount / verified) * 100).toFixed(1) : '-';
+  const halfWin = allBetRecords.filter(r => r.betResult === '◐').length;
+  const halfLoss = allBetRecords.filter(r => r.betResult === '◑').length;
+  const hitEquiv = hitCount + halfWin * 0.5 + halfLoss * 0.5; // 命中等效值(半赢含0.5赢)
+  const hitRate = verified > 0 ? ((hitEquiv / verified) * 100).toFixed(1) : '-';
 
   statsEl.innerHTML = `
     <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:11px">
@@ -1238,7 +1294,8 @@ function renderDailyRecords() {
         </tr></thead><tbody>`;
 
     dayRecs.forEach(rec => {
-      const resultColor = rec.betResult === '✓' ? '#3fb950' : rec.betResult === '✗' ? '#f85149' : '#484f58';
+      const resultColorMap = { '✓': '#3fb950', '✗': '#f85149', '◐': '#d4a72c', '◑': '#d29922', '➖': '#8b949e' };
+      const resultColor = resultColorMap[rec.betResult] || '#484f58';
       const valueColor = rec.valueLevel === '高价值' ? '#f0883e' : '#58a6ff';
       const matchName = `${rec.matchHome}vs${rec.matchAway}`;
       const shortName = matchName.length > 10 ? matchName.slice(0, 10) + '…' : matchName;
@@ -1336,8 +1393,9 @@ document.addEventListener('click', async (e) => {
           rec.actualScore = resp.score || rec.actualScore;
           if (resp.betResult) rec.betResult = resp.betResult;
         }
-        const resultText = resp.betResult === '✓' ? '✅ 命中' : resp.betResult === '✗' ? '❌ 未中' : '⚠️ 无法自动判断';
-        showAlert(`${resultText} | 比分: ${resp.score || '未知'} | ${resp.autoJudge || ''}`, 'info', 5000);
+        const resultMap = { '✓': '✅ 命中', '✗': '❌ 未中', '◐': '🟡 半赢', '◑': '🟠 半输', '➖': '⚪ 走盘退款' };
+        const resultText = resultMap[resp.betResult] || '⚠️ 无法自动判断';
+        showAlert(`${resultText} | 比分: ${resp.score || '未知'} | ${resp.autoJudge || ''}`, 'info', 6000);
         renderDailyRecords();
       } else {
         showAlert(`验证失败: ${resp.error}`, 'error');
@@ -1406,22 +1464,51 @@ async function fetchLiveAndPredict(matchId) {
 }
 
 function renderLiveData(matchId, liveData) {
-  const { matchInfo, liveScore, events, asianLive, ouLive } = liveData;
+  const { matchInfo, liveScore, events, asianLive, ouLive, matchStats, recentStats } = liveData;
   const home = matchInfo?.home || '主队';
   const away = matchInfo?.away || '客队';
+  const league = matchInfo?.league || '';
   const score = liveScore?.score || '-:-';
   const minute = liveScore?.minute || '';
-  const period = liveScore?.period || '';
+  const status = liveScore?.status || '';
 
   let html = `<div class="data-section">
-    <div class="section-header" style="color:#f85149">🔴 滚球实时数据 - ${escapeHtml(home)} vs ${escapeHtml(away)}</div>
+    <div class="section-header" style="color:#f85149">🔴 滚球实时数据${league ? ' · ' + escapeHtml(league) : ''}</div>
     <div class="section-body">
-      <div class="stat-row"><span class="stat-label">比分</span><span class="stat-value highlight" style="font-size:18px">${score}</span></div>
-      ${minute ? `<div class="stat-row"><span class="stat-label">时间</span><span class="stat-value">${minute}' ${period}</span></div>` : ''}
+      <div class="stat-row"><span class="stat-label">${escapeHtml(home)} vs ${escapeHtml(away)}</span><span class="stat-value highlight" style="font-size:18px">${score}</span></div>
+      <div class="stat-row"><span class="stat-label">状态</span><span class="stat-value">${minute ? minute + "' " : ''}${escapeHtml(status)}</span></div>
       ${asianLive?.handicap ? `<div class="stat-row"><span class="stat-label">实时亚盘</span><span class="stat-value">${asianLive.handicap} 主${asianLive.homeWater}/客${asianLive.awayWater}</span></div>` : ''}
       ${ouLive?.line ? `<div class="stat-row"><span class="stat-label">实时大小球</span><span class="stat-value">${ouLive.line} 大${ouLive.overWater}/小${ouLive.underWater}</span></div>` : ''}
     </div>
   </div>`;
+
+  // 本场实时技术统计
+  const ms = matchStats || {};
+  const statKeys = Object.keys(ms);
+  if (statKeys.length > 0) {
+    html += `<div class="data-section">
+      <div class="section-header">📊 本场技术统计（主 / 客）</div>
+      <div class="section-body">`;
+    statKeys.forEach(k => {
+      const s = ms[k];
+      html += `<div class="stat-row"><span class="stat-label">${escapeHtml(s.label)}</span><span class="stat-value">${escapeHtml(s.home)} / ${escapeHtml(s.away)}</span></div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // 近期技统（近3 / 近10 场）
+  const rs = recentStats || {};
+  const rKeys = Object.keys(rs.home || {});
+  if (rKeys.length > 0) {
+    html += `<div class="data-section">
+      <div class="section-header">📈 近期场均（近3 / 近10）</div>
+      <div class="section-body">`;
+    rKeys.forEach(k => {
+      const h = rs.home[k], a = rs.away?.[k] || {};
+      html += `<div class="stat-row"><span class="stat-label">${escapeHtml(k)}</span><span class="stat-value">主 ${escapeHtml(h.n3)}/${escapeHtml(h.n10)} · 客 ${escapeHtml(a.n3 || '-')}/${escapeHtml(a.n10 || '-')}</span></div>`;
+    });
+    html += `</div></div>`;
+  }
 
   if (events?.length > 0) {
     html += `<div class="data-section">
@@ -1429,12 +1516,12 @@ function renderLiveData(matchId, liveData) {
       <div class="section-body"><div class="signal-list">`;
     events.forEach(ev => {
       const icon = ev.type === 'goal' ? '⚽' : '🟥';
-      html += `<div class="signal-item"><div class="signal-dot positive"></div>${icon} ${ev.minute}' ${escapeHtml(ev.player || '')}</div>`;
+      html += `<div class="signal-item"><div class="signal-dot positive"></div>${icon} ${ev.minute}' ${escapeHtml(ev.kind || '')}</div>`;
     });
     html += `</div></div></div>`;
   }
 
-  // 插入到监控列表项下方或数据面板
+  // 插入到数据面板
   const dataEl = document.getElementById('dataContent');
   dataEl.innerHTML = html + (dataEl.innerHTML || '');
   switchTab('data');
