@@ -1,28 +1,28 @@
 // Background Service Worker - Tab注入为主，后台fetch为辅
 
-import从‘./js/ Predictor .js’导入{Predictor， PredictionLogger}； { Predictor, PredictionLogger } from './js/predictor.js';
-import从‘./js/report.js’中导入{ReportGenerator}； { ReportGenerator } from './js/report.js';
-import从‘./js/ai-client.js’导入{AIClient}； { AIClient } from './js/ai-client.js';
+import { Predictor, PredictionLogger } from './js/predictor.js';
+import { ReportGenerator } from './js/report.js';
+import { AIClient } from './js/ai-client.js';
 
-constconst predictor = new predictor ()； predictor = new Predictor();
-constconst reportGen = new reportGenerator ()； reportGen = new ReportGenerator();
-constconst aiClient = new AIClient()； aiClient = new AIClient();
+const predictor = new Predictor();
+const reportGen = new ReportGenerator();
+const aiClient = new AIClient();
 
-let   让monitorTasks = {}； monitorTasks = {};
+let monitorTasks = {};
 let panelWindowId = null; // 固定面板窗口ID
 
 // 点击图标打开固定独立窗口（不会自动消失）
-chromechrome.action.onClicked。addListener(async () => {.action.onClicked.addListener(async () => {
+chrome.action.onClicked.addListener(async () => {
   // 如果窗口已存在，聚焦它
-  如果(panelwindowwid ！== null) {if (panelWindowId !== null) {
-       尝试{try {
-      等待chrome.windows。update(panelWindowId, {focused: true})；await chrome.windows   窗户   窗户.update(panelWindowId, { focused: true });
-         返回;return;
+  if (panelWindowId !== null) {
+    try {
+      await chrome.windows.update(panelWindowId, { focused: true });
+      return;
     } catch {
       panelWindowId = null; // 窗口已关闭，重新创建
     }
   }
-  const win = await chrome.windows   窗户.create({
+  const win = await chrome.windows.create({
     url: chrome.runtime.getURL('popup.html'),
     type: 'popup',
     width: 560,
@@ -32,7 +32,7 @@ chromechrome.action.onClicked。addListener(async () => {.action.onClicked.addLi
   });
   panelWindowId = win.id;
   // 监听窗口关闭，清除ID
-  chrome.windows   窗户.onRemoved.addListener(function onRemoved(id) {
+  chrome.windows.onRemoved.addListener(function onRemoved(id) {
     if (id === panelWindowId) {
       panelWindowId = null;
       chrome.windows.onRemoved.removeListener(onRemoved);
@@ -87,16 +87,17 @@ async function handlePageData(msg, sender) {
 
   await chrome.storage.local.set({ [key]: partial });
 
-  const   常量 types = ['analysis', 'asian', 'overunder', 'corner'];
+  const types = ['analysis', 'winDrawWin', 'asian', 'overunder', 'corner'];
   const filled = types.filter(t => partial[t] && !partial[t].error);
 
-  console.log(`[BG] PageData ${matchId}/${dataType}: ${filled.length}/4 ready`);
+  console.log(`[BG] PageData ${matchId}/${dataType}: ${filled.length}/${types.length} ready`);
 
-  // 4种数据到齐后合并存储
+  // 5种数据到齐后合并存储
   if (filled.length === types.length) {
     const fullData = {
       matchId, fetchTime: new Date().toISOString(),
       analysis: partial.analysis,
+      winDrawWin: partial.winDrawWin,
       asian: partial.asian,
       overunder: partial.overunder,
       corner: partial.corner
@@ -126,7 +127,7 @@ async function handleMessage(msg, sender, sendResponse) {
 
       case 'FETCH_NOW': {
         const { matchId } = msg;
-        // 主方法：打开4个标签页，通过content script采集DOM
+        // 主方法：打开5个标签页，通过content script采集DOM
         const data = await collectViaTabInjection(matchId);
         if (data) {
           await storeData(matchId, data);
@@ -226,13 +227,14 @@ async function handleMessage(msg, sender, sendResponse) {
   }
 }
 
-// ===== 核心：通过标签页注入采集4个数据源 =====
+// ===== 核心：通过标签页注入采集5个数据源 =====
 async function collectViaTabInjection(matchId) {
   const sources = [
-    { type: 'analysis',  url: `https://zq.titan007.com/analysis/${matchId}cn.htm` },
-    { type: 'asian',     url: `https://vip.titan007.com/AsianOdds_n.aspx?id=${matchId}&l=0` },
-    { type: 'overunder', url: `https://vip.titan007.com/OverDown_n.aspx?id=${matchId}&l=0` },
-    { type: 'corner',    url: `https://vip.titan007.com/Corner.aspx?id=${matchId}&l=0` }
+    { type: 'analysis',   url: `https://zq.titan007.com/analysis/${matchId}cn.htm` },
+    { type: 'winDrawWin', url: `https://1x2.titan007.com/oddslist/${matchId}.htm` },
+    { type: 'asian',      url: `https://vip.titan007.com/AsianOdds_n.aspx?id=${matchId}&l=0` },
+    { type: 'overunder',  url: `https://vip.titan007.com/OverDown_n.aspx?id=${matchId}&l=0` },
+    { type: 'corner',     url: `https://vip.titan007.com/Corner.aspx?id=${matchId}&l=0` }
   ];
 
   const results = await Promise.allSettled(sources.map(s => extractOneTab(s.url, s.type)));
@@ -276,8 +278,8 @@ function extractOneTab(url, dataType) {
         if (id !== tabId || info.status !== 'complete') return;
         chrome.tabs.onUpdated.removeListener(onUpdated);
 
-        // analysis 页面内容通过 Ajax 异步加载，需分阶段等待
-        const waitMs = dataType === 'analysis' ? 6000 : 2500;
+        // analysis / 1x2 页面内容通过 Ajax 异步加载，需分阶段等待
+        const waitMs = dataType === 'analysis' ? 6000 : (dataType === 'winDrawWin' ? 5000 : 2500);
 
         const tryExtract = (attempt) => {
           chrome.scripting.executeScript({
@@ -293,6 +295,11 @@ function extractOneTab(url, dataType) {
             const result = injResults?.[0]?.result;
             // analysis 页：textLen < 12000 且还有重试机会，再等3秒重试
             if (dataType === 'analysis' && result?._debug?.textLen < 12000 && attempt < 2) {
+              setTimeout(() => tryExtract(attempt + 1), 3000);
+              return;
+            }
+            // 1x2 欧赔页经常由脚本延迟填表，公司列表为空时再等待一次
+            if (dataType === 'winDrawWin' && (!result || result.error || !Array.isArray(result.companies) || result.companies.length === 0) && attempt < 2) {
               setTimeout(() => tryExtract(attempt + 1), 3000);
               return;
             }
@@ -312,7 +319,7 @@ function extractOneTab(url, dataType) {
 // 此函数将被注入到目标页面中执行（不能引用外部变量）
 function extractPageData(dataType) {
   try {
-    const text = document.body.innerText || '';
+    let text = document.body.innerText || '';
     const html = document.documentElement.outerHTML || '';
     // 触发懒加载：滚动到底部再回顶部
     window.scrollTo(0, document.body.scrollHeight);
@@ -323,6 +330,7 @@ function extractPageData(dataType) {
     if (freshText.length > text.length) text = freshText;
 
     if (dataType === 'analysis') return extractAnalysis(text, html);
+    if (dataType === 'winDrawWin') return extractWinDrawWin(text, html);
     if (dataType === 'asian')    return extractAsian(text, html);
     if (dataType === 'overunder')return extractOverUnder(text, html);
     if (dataType === 'corner')   return extractCorner(text, html);
@@ -432,31 +440,177 @@ function extractPageData(dataType) {
     if (statsTables.length >= 4) result.awayHalfStats = statsTables[3].data;
 
     // ---- 盘路走势 ----
-    var allRates = [];
-    var rateRe = /赢盘率[^\d\n]{0,5}(\d{1,3}\.?\d*)%/g;
     var rm;
-    while ((rm = rateRe.exec(text)) !== null) allRates.push(rm[1]);
-    var allBigRates = [];
-    var bigRe = /大球率[^\d\n]{0,5}(\d{1,3}\.?\d*)%/g;
-    while ((rm = bigRe.exec(text)) !== null) allBigRates.push(rm[1]);
+    var compact = function(v) { return (v || '').replace(/\s+/g, '').trim(); };
+    var pctFromText = function(v) {
+      var m = String(v || '').match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+      return m ? m[1] : '';
+    };
+    var getCells = function(row) {
+      var nodes = row.querySelectorAll('th,td');
+      var cells = [];
+      for (var ci = 0; ci < nodes.length; ci++) cells.push(nodes[ci].textContent.trim().replace(/\s+/g, ' '));
+      return cells;
+    };
+    var hasTrendData = function(trend) {
+      return !!(trend && (
+        (trend.winRates && trend.winRates.some(Boolean)) ||
+        (trend.bigBallRates && trend.bigBallRates.some(Boolean)) ||
+        trend.last6Asian || trend.last6OU || trend.last6HalfAsian
+      ));
+    };
+    var rowLabel = function(cells, rowText) {
+      var first = compact(cells[0] || '');
+      if (/近6|近六/.test(rowText) || first === '近6' || first === '近6场') return 'last6';
+      if (first === '总' || first === '全部' || first === '全场') return 'total';
+      if (first === '主' || first === '主场') return 'home';
+      if (first === '客' || first === '客场') return 'away';
+      return '';
+    };
+    var getHeaderIndex = function(headers, words) {
+      for (var hi = 0; hi < headers.length; hi++) {
+        var h = compact(headers[hi]);
+        for (var wi = 0; wi < words.length; wi++) {
+          if (h.indexOf(words[wi]) >= 0) return hi;
+        }
+      }
+      return -1;
+    };
+    var getRateByIndex = function(cells, idx) {
+      if (idx < 0) return '';
+      return pctFromText(cells[idx]) || pctFromText(cells[idx + 1]) || pctFromText(cells[idx - 1]);
+    };
+    var oneCharSeq = function(cells, re) {
+      var out = [];
+      for (var si = 0; si < cells.length; si++) {
+        var c = compact(cells[si]);
+        if (re.test(c)) out.push(c);
+      }
+      return out.length >= 3 ? out.join(' ') : '';
+    };
+    var toTrend = function(parsed, owner) {
+      var venueBig = owner === 'away' ? (parsed.big.away || parsed.big.home) : (parsed.big.home || parsed.big.away);
+      return {
+        winRates: [parsed.win.total || '', parsed.win.home || '', parsed.win.away || '', parsed.win.last6 || ''],
+        bigBallRates: [parsed.big.total || '', venueBig || '', parsed.big.last6 || ''],
+        last6Asian: parsed.last6Asian || '',
+        last6OU: parsed.last6OU || '',
+        source: parsed.source || ''
+      };
+    };
+    var parseTrendTable = function(tbl) {
+      var rows = Array.from(tbl.querySelectorAll('tr'));
+      var parsed = { win: {}, big: {}, last6Asian: '', last6OU: '', source: 'table' };
+      var headers = [];
+      for (var ri = 0; ri < Math.min(rows.length, 4); ri++) {
+        var hc = getCells(rows[ri]);
+        if (hc.join(' ').indexOf('赢盘率') >= 0 || hc.join(' ').indexOf('大球率') >= 0) {
+          headers = hc;
+          break;
+        }
+      }
+      var winIdx = getHeaderIndex(headers, ['赢盘率', '赢率']);
+      var bigIdx = getHeaderIndex(headers, ['大球率']);
+      for (var r = 0; r < rows.length; r++) {
+        var cells = getCells(rows[r]);
+        if (!cells.length) continue;
+        var rowText = cells.join(' ');
+        var rowCompact = compact(rowText);
+        var label = rowLabel(cells, rowCompact);
+        if (!label) continue;
 
-    result.handicapTrend.home.winRates = allRates.slice(0, 4);
-    result.handicapTrend.away.winRates = allRates.slice(4, 8);
-    result.handicapTrend.home.bigBallRates = allBigRates.slice(0, 3);
-    result.handicapTrend.away.bigBallRates = allBigRates.slice(3, 6);
+        var winRate = getRateByIndex(cells, winIdx);
+        var bigRate = getRateByIndex(cells, bigIdx);
+        var winLabelPos = rowText.indexOf('赢盘率');
+        var bigLabelPos = rowText.indexOf('大球率');
+        if (!winRate && winLabelPos >= 0) winRate = pctFromText(rowText.slice(winLabelPos));
+        if (!bigRate && bigLabelPos >= 0) bigRate = pctFromText(rowText.slice(bigLabelPos));
+        if (!winRate && rowCompact.indexOf('赢盘') >= 0) {
+          var pcts = rowText.match(/\d{1,3}(?:\.\d+)?\s*%/g) || [];
+          if (pcts.length) winRate = pctFromText(pcts[pcts.length - 1]);
+        }
+        if (!bigRate && rowCompact.indexOf('大球') >= 0) {
+          var bigPcts = rowText.match(/\d{1,3}(?:\.\d+)?\s*%/g) || [];
+          if (bigPcts.length) bigRate = pctFromText(bigPcts[bigPcts.length - 1]);
+        }
+        if (winRate) parsed.win[label] = winRate;
+        if (bigRate) parsed.big[label] = bigRate;
+        if (label === 'last6') {
+          parsed.last6Asian = parsed.last6Asian || oneCharSeq(cells, /^[赢输走]$/);
+          parsed.last6OU = parsed.last6OU || oneCharSeq(cells, /^[大小走]$/);
+        }
+      }
+      return (Object.keys(parsed.win).length || Object.keys(parsed.big).length || parsed.last6Asian || parsed.last6OU) ? parsed : null;
+    };
+    var tableOwner = function(tbl) {
+      var homeName = result.matchInfo.home || '';
+      var awayName = result.matchInfo.away || '';
+      var ctx = '';
+      var node = tbl.previousElementSibling;
+      for (var step = 0; node && step < 8; step++, node = node.previousElementSibling) ctx += ' ' + node.textContent;
+      var tblText = tbl.textContent || '';
+      var near = ctx || tblText;
+      if (homeName && near.indexOf(homeName) >= 0 && (!awayName || near.indexOf(awayName) < 0)) return 'home';
+      if (awayName && near.indexOf(awayName) >= 0 && (!homeName || near.indexOf(homeName) < 0)) return 'away';
+      return '';
+    };
+
+    var trendTables = [];
+    for (var tti = 0; tti < allTables.length; tti++) {
+      var tt = allTables[tti].textContent || '';
+      if (!/(赢盘率|大球率|近6场盘路走势|盘路走势)/.test(tt)) continue;
+      var parsedTrend = parseTrendTable(allTables[tti]);
+      if (parsedTrend) trendTables.push({ owner: tableOwner(allTables[tti]), parsed: parsedTrend, idx: tti });
+    }
+    result._debug.trendTables = trendTables.map(function(x) { return { idx: x.idx, owner: x.owner, win: x.parsed.win, big: x.parsed.big }; });
+
+    var pendingTrendTables = [];
+    for (var pt = 0; pt < trendTables.length; pt++) {
+      if (trendTables[pt].owner === 'home' && !hasTrendData(result.handicapTrend.home)) {
+        result.handicapTrend.home = toTrend(trendTables[pt].parsed, 'home');
+      } else if (trendTables[pt].owner === 'away' && !hasTrendData(result.handicapTrend.away)) {
+        result.handicapTrend.away = toTrend(trendTables[pt].parsed, 'away');
+      } else {
+        pendingTrendTables.push(trendTables[pt]);
+      }
+    }
+    for (var ptti = 0; ptti < pendingTrendTables.length; ptti++) {
+      if (!hasTrendData(result.handicapTrend.home)) result.handicapTrend.home = toTrend(pendingTrendTables[ptti].parsed, 'home');
+      else if (!hasTrendData(result.handicapTrend.away)) result.handicapTrend.away = toTrend(pendingTrendTables[ptti].parsed, 'away');
+    }
+
+    // 文本兜底：用于没有可解析表格结构的旧页面，范围放宽但只在表格解析未命中时使用。
+    if (!hasTrendData(result.handicapTrend.home) || !hasTrendData(result.handicapTrend.away)) {
+      var allRates = [];
+      var rateRe = /(?:赢盘率[\s\S]{0,40}?(\d{1,3}\.?\d*)%|(\d{1,3}\.?\d*)%[\s\S]{0,20}?赢盘率)/g;
+      while ((rm = rateRe.exec(text)) !== null) allRates.push(rm[1] || rm[2]);
+      var allBigRates = [];
+      var bigRe = /(?:大球率[\s\S]{0,40}?(\d{1,3}\.?\d*)%|(\d{1,3}\.?\d*)%[\s\S]{0,20}?大球率)/g;
+      while ((rm = bigRe.exec(text)) !== null) allBigRates.push(rm[1] || rm[2]);
+      if (!hasTrendData(result.handicapTrend.home)) {
+        result.handicapTrend.home.winRates = allRates.slice(0, 4);
+        result.handicapTrend.home.bigBallRates = allBigRates.slice(0, 3);
+        result.handicapTrend.home.source = 'text-fallback';
+      }
+      if (!hasTrendData(result.handicapTrend.away)) {
+        result.handicapTrend.away.winRates = allRates.slice(4, 8);
+        result.handicapTrend.away.bigBallRates = allBigRates.slice(3, 6);
+        result.handicapTrend.away.source = 'text-fallback';
+      }
+    }
 
     // 近6场走势（格式：赢 赢 输 输 赢 输）
     var seqRe = /近6场\s*\n\s*6\s*\n\s*((?:[赢输走]\s+){3,8})/g;
     var seqMatches = [];
     while ((rm = seqRe.exec(text)) !== null) seqMatches.push(rm[1].trim().replace(/\s+/g,' '));
-    if (seqMatches[0]) result.handicapTrend.home.last6Asian = seqMatches[0];
-    if (seqMatches[1]) result.handicapTrend.away.last6Asian = seqMatches[1];
+    if (!result.handicapTrend.home.last6Asian && seqMatches[0]) result.handicapTrend.home.last6Asian = seqMatches[0];
+    if (!result.handicapTrend.away.last6Asian && seqMatches[1]) result.handicapTrend.away.last6Asian = seqMatches[1];
 
-    var ouSeqRe = /近6场盘路走势:\s*((?:[大小走]\s*){3,8})/g;
+    var ouSeqRe = /近6场盘路走势[:：]\s*((?:[大小走]\s*){3,8})/g;
     var ouSeqs = [];
     while ((rm = ouSeqRe.exec(text)) !== null) ouSeqs.push(rm[1].trim());
-    if (ouSeqs[0]) result.handicapTrend.home.last6OU = ouSeqs[0];
-    if (ouSeqs[1]) result.handicapTrend.away.last6OU = ouSeqs[1];
+    if (!result.handicapTrend.home.last6OU && ouSeqs[0]) result.handicapTrend.home.last6OU = ouSeqs[0];
+    if (!result.handicapTrend.away.last6OU && ouSeqs[1]) result.handicapTrend.away.last6OU = ouSeqs[1];
 
     // ---- 相同盘口历史 ----
     var sbRe = /初盘[:：]([\w\/]+)\s*[\s\S]{0,500}?近6场盘路走势:\s*([\w\s]+)/g;
@@ -733,6 +887,206 @@ function extractPageData(dataType) {
     return result;
   }
 
+  // ===================== 胜平负 / 欧赔（1x2）=====================
+  function extractWinDrawWin(text, html) {
+    const result = {
+      companies: [],
+      summary: {},
+      keyOdds: {},
+      history: [],
+      _debug: { title: document.title, textLen: text.length, tables: document.querySelectorAll('table').length, parsedRows: 0, skippedRows: 0 }
+    };
+
+    const clean = function(v) { return String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim(); };
+    const compact = function(v) { return clean(v).replace(/\s+/g, ''); };
+    const fmt = function(n) { return isFinite(n) ? Number(n).toFixed(2) : ''; };
+    const isSkipName = function(name) {
+      if (!name) return true;
+      return /^(公司|所有|主流|交易所|非交易所|初|即|主|和|客|主胜|客胜|返还率|凯利指数|变化时间|历史指数|筛选|设置自定义)$/.test(name) ||
+        /初盘|即时|最高值|最低值|平均值|高级筛选|最低值|最高值|删除选中|保留选中|导出Excel|欧亚转换/.test(name);
+    };
+    const extractCells = function(row) {
+      return Array.from(row.querySelectorAll('th,td')).map(function(c) { return clean(c.textContent); });
+    };
+    const extractName = function(row, cells) {
+      var td = row.querySelector('td');
+      var raw = '';
+      if (td) {
+        td.childNodes.forEach(function(node) {
+          if (!raw && node.nodeType === 3) raw = clean(node.textContent);
+        });
+        if (!raw) {
+          var a = td.querySelector('a');
+          raw = a ? clean(a.textContent) : clean(td.textContent);
+        }
+      }
+      if (!raw) raw = cells[0] || '';
+      raw = raw.replace(/^[\d一二三四五六七八九十]+[、.．\-]?\s*/, '')
+        .replace(/[×√□☑★*]/g, '')
+        .replace(/\([^)]*\)/g, '')
+        .replace(/\[[^\]]*\]/g, '')
+        .replace(/(走势|详情|历史|主流|交易所|非交易所)$/g, '')
+        .trim();
+      if (!raw || /^\d+$/.test(raw) || isSkipName(compact(raw))) {
+        for (var i = 0; i < Math.min(3, cells.length); i++) {
+          var cand = compact(cells[i]).replace(/^[\d一二三四五六七八九十]+[、.．\-]?/, '').replace(/[×√□☑★*]/g, '');
+          if (cand && !/^\d+(?:\.\d+)?%?$/.test(cand) && !isSkipName(cand) && cand.length <= 20) return cand;
+        }
+      }
+      raw = compact(raw);
+      if (raw.length > 20) raw = raw.substring(0, 20);
+      return isSkipName(raw) ? '' : raw;
+    };
+    const parseNumberItems = function(cells, startIndex) {
+      const items = [];
+      for (var i = startIndex || 0; i < cells.length; i++) {
+        var ms = clean(cells[i]).match(/\d{1,3}(?:\.\d+)?%?/g) || [];
+        for (var j = 0; j < ms.length; j++) {
+          var pct = ms[j].indexOf('%') >= 0;
+          var val = parseFloat(ms[j].replace('%', ''));
+          if (isFinite(val)) items.push({ value: val, text: ms[j].replace('%', ''), pct: pct, cellIndex: i });
+        }
+      }
+      return items;
+    };
+    const isReasonableOdds = function(v) { return v >= 1.01 && v <= 20; };
+    const makeEntry = function(name, odds, rowText, source) {
+      if (!name || odds.length < 3) return null;
+      var hasInitialAndCurrent = odds.length >= 6 && odds.slice(0, 6).every(isReasonableOdds);
+      var entry = { name: name, source: source || 'table' };
+      if (hasInitialAndCurrent) {
+        entry.initialWin = fmt(odds[0]);
+        entry.initialDraw = fmt(odds[1]);
+        entry.initialLoss = fmt(odds[2]);
+        entry.currentWin = fmt(odds[3]);
+        entry.currentDraw = fmt(odds[4]);
+        entry.currentLoss = fmt(odds[5]);
+      } else {
+        entry.initialWin = '';
+        entry.initialDraw = '';
+        entry.initialLoss = '';
+        entry.currentWin = fmt(odds[0]);
+        entry.currentDraw = fmt(odds[1]);
+        entry.currentLoss = fmt(odds[2]);
+      }
+      var returnM = rowText.match(/返还率?\s*[:：]?\s*(\d{1,3}(?:\.\d+)?)%?/);
+      if (returnM) entry.returnRate = returnM[1] + (rowText.indexOf('%') >= 0 ? '%' : '');
+      var timeM = rowText.match(/(\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2})/);
+      if (timeM) entry.changeTime = timeM[1];
+      return entry;
+    };
+    const addCompany = function(entry) {
+      if (!entry) return;
+      var key = [entry.name, entry.currentWin, entry.currentDraw, entry.currentLoss].join('|');
+      for (var i = 0; i < result.companies.length; i++) {
+        var oldKey = [result.companies[i].name, result.companies[i].currentWin, result.companies[i].currentDraw, result.companies[i].currentLoss].join('|');
+        if (oldKey === key) return;
+      }
+      result.companies.push(entry);
+    };
+    const parseSummaryRow = function(label, cells) {
+      var nums = parseNumberItems(cells, 1).filter(function(x) { return !x.pct && isReasonableOdds(x.value); }).map(function(x) { return x.value; });
+      if (nums.length < 3) return;
+      var target = null;
+      if (/初盘平均值/.test(label)) target = 'averageInitial';
+      else if (/即时平均值/.test(label)) target = 'averageCurrent';
+      else if (/初盘最高值/.test(label)) target = 'maxInitial';
+      else if (/即时最高值/.test(label)) target = 'maxCurrent';
+      else if (/初盘最低值/.test(label)) target = 'minInitial';
+      else if (/即时最低值/.test(label)) target = 'minCurrent';
+      if (target) result.summary[target] = { win: fmt(nums[0]), draw: fmt(nums[1]), loss: fmt(nums[2]) };
+    };
+
+    document.querySelectorAll('table tr').forEach(function(row) {
+      const cells = extractCells(row);
+      if (cells.length < 4) { result._debug.skippedRows++; return; }
+      const rowText = cells.join(' ');
+      const rowCompact = compact(rowText);
+      if (/^(初盘|即时)(最高值|最低值|平均值)/.test(rowCompact)) {
+        parseSummaryRow(rowCompact, cells);
+        return;
+      }
+      if (!/(\d{1,2}\.\d{2,3})/.test(rowText)) { result._debug.skippedRows++; return; }
+      const name = extractName(row, cells);
+      if (!name) { result._debug.skippedRows++; return; }
+      const nums = parseNumberItems(cells, 1)
+        .filter(function(x) { return !x.pct && x.value >= 1.01 && x.value <= 30; })
+        .map(function(x) { return x.value; });
+      const entry = makeEntry(name, nums, rowText, 'table');
+      if (entry) {
+        addCompany(entry);
+        result._debug.parsedRows++;
+      } else {
+        result._debug.skippedRows++;
+      }
+    });
+
+    if (result.companies.length === 0) {
+      const lines = (text + '\n' + String(html || '').replace(/[<>"'=,;\[\]{}()]/g, ' ')).split(/\n+/);
+      for (var li = 0; li < lines.length && result.companies.length < 120; li++) {
+        var line = clean(lines[li]);
+        if (!line || !/\d{1,2}\.\d{2,3}/.test(line)) continue;
+        var firstNum = line.search(/\d{1,2}\.\d{2,3}/);
+        if (firstNum <= 0) continue;
+        var name = compact(line.slice(0, firstNum)).replace(/^[\d一二三四五六七八九十]+[、.．\-]?/, '').replace(/[×√□☑★*]/g, '');
+        if (!name || name.length > 20 || isSkipName(name)) continue;
+        var nums = (line.match(/\d{1,2}\.\d{2,3}/g) || []).map(function(x) { return parseFloat(x); }).filter(function(x) { return x >= 1.01 && x <= 30; });
+        addCompany(makeEntry(name, nums, line, 'text-fallback'));
+      }
+    }
+
+    const calcAverage = function(selector) {
+      if (!result.companies.length) return null;
+      var rows = result.companies.map(selector).filter(function(x) { return x && isFinite(parseFloat(x.win)) && isFinite(parseFloat(x.draw)) && isFinite(parseFloat(x.loss)); });
+      if (!rows.length) return null;
+      var sum = rows.reduce(function(acc, x) {
+        acc.win += parseFloat(x.win);
+        acc.draw += parseFloat(x.draw);
+        acc.loss += parseFloat(x.loss);
+        return acc;
+      }, { win: 0, draw: 0, loss: 0 });
+      return { win: fmt(sum.win / rows.length), draw: fmt(sum.draw / rows.length), loss: fmt(sum.loss / rows.length) };
+    };
+    if (!result.summary.averageCurrent) result.summary.averageCurrent = calcAverage(function(c) { return { win: c.currentWin, draw: c.currentDraw, loss: c.currentLoss }; });
+    if (!result.summary.averageInitial) result.summary.averageInitial = calcAverage(function(c) { return { win: c.initialWin, draw: c.initialDraw, loss: c.initialLoss }; });
+
+    const movement = { winDown: 0, winUp: 0, drawDown: 0, drawUp: 0, lossDown: 0, lossUp: 0 };
+    result.companies.forEach(function(c) {
+      var iw = parseFloat(c.initialWin), cw = parseFloat(c.currentWin);
+      var id = parseFloat(c.initialDraw), cd = parseFloat(c.currentDraw);
+      var il = parseFloat(c.initialLoss), cl = parseFloat(c.currentLoss);
+      if (isFinite(iw) && isFinite(cw)) { if (cw < iw) movement.winDown++; else if (cw > iw) movement.winUp++; }
+      if (isFinite(id) && isFinite(cd)) { if (cd < id) movement.drawDown++; else if (cd > id) movement.drawUp++; }
+      if (isFinite(il) && isFinite(cl)) { if (cl < il) movement.lossDown++; else if (cl > il) movement.lossUp++; }
+    });
+    result.summary.count = result.companies.length;
+    result.summary.movement = movement;
+
+    if (result.summary.averageCurrent) {
+      var aw = parseFloat(result.summary.averageCurrent.win);
+      var ad = parseFloat(result.summary.averageCurrent.draw);
+      var al = parseFloat(result.summary.averageCurrent.loss);
+      if (aw > 0 && ad > 0 && al > 0) {
+        var invW = 1 / aw, invD = 1 / ad, invL = 1 / al;
+        var total = invW + invD + invL;
+        result.summary.impliedAverage = {
+          win: (invW / total * 100).toFixed(1) + '%',
+          draw: (invD / total * 100).toFixed(1) + '%',
+          loss: (invL / total * 100).toFixed(1) + '%'
+        };
+      }
+    }
+
+    result.keyOdds.allCurrent = result.companies.map(function(c) {
+      return { name: c.name, win: c.currentWin, draw: c.currentDraw, loss: c.currentLoss };
+    });
+    if (result.companies[0]) result.keyOdds.ao = { name: result.companies[0].name, ...result.companies[0] };
+    if (result.companies[1]) result.keyOdds.crown = { name: result.companies[1].name, ...result.companies[1] };
+    result.history = extractHistory(text, 'winDrawWin');
+
+    return result;
+  }
+
   // ===================== 角球（完整版）=====================
   function extractCorner(text, html) {
     const result = { companies: [], allOdds: [], history: [] };
@@ -824,13 +1178,38 @@ async function runMonitorCycle(matchId) {
 
 function detectChanges(prev, curr) {
   const changes = [];
+
+  const pw = prev.winDrawWin?.keyOdds?.ao, cw = curr.winDrawWin?.keyOdds?.ao;
+  const prevWinDrawWin = formatWinDrawWinOdds(pw);
+  const currWinDrawWin = formatWinDrawWinOdds(cw);
+  if (prevWinDrawWin && currWinDrawWin && prevWinDrawWin !== currWinDrawWin) {
+    changes.push({ type: 'winDrawWin', from: prevWinDrawWin, to: currWinDrawWin });
+  }
+
   const pa = prev.asian?.keyOdds?.ao, ca = curr.asian?.keyOdds?.ao;
   if (pa && ca && pa.currentHandicap !== ca.currentHandicap)
     changes.push({ type: 'asian', from: pa.currentHandicap, to: ca.currentHandicap });
+
   const po = prev.overunder?.keyOdds?.ao, co = curr.overunder?.keyOdds?.ao;
   if (po && co && po.currentLine !== co.currentLine)
     changes.push({ type: 'ou', from: po.currentLine, to: co.currentLine });
+
   return changes;
+}
+
+function formatWinDrawWinOdds(odds) {
+  if (!odds) return '';
+  const values = [odds.currentWin, odds.currentDraw, odds.currentLoss]
+    .map(v => String(v ?? '').trim());
+  if (values.some(v => !v)) return '';
+  return values.join('/');
+}
+
+function formatChangeMessage(change) {
+  if (change.type === 'winDrawWin') return `胜平负: 主/平/客 ${change.from}→${change.to}`;
+  if (change.type === 'asian') return `亚让: ${change.from}→${change.to}`;
+  if (change.type === 'ou') return `大小球: ${change.from}→${change.to}`;
+  return `${change.type}: ${change.from}→${change.to}`;
 }
 
 function notifyChanges(matchId, changes, data) {
@@ -839,7 +1218,7 @@ function notifyChanges(matchId, changes, data) {
   chrome.notifications.create(`chg_${matchId}_${Date.now()}`, {
     type: 'basic', iconUrl: 'icons/icon48.png',
     title: `⚽ ${home}${away ? ' vs ' + away : ''} 盘口变动`,
-    message: changes.map(c => c.type === 'asian' ? `亚让: ${c.from}→${c.to}` : `大小球: ${c.from}→${c.to}`).join('\n')
+    message: changes.map(formatChangeMessage).join('\n')
   });
 }
 

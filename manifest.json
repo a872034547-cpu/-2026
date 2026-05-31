@@ -16,6 +16,7 @@
   "host_permissions": [
     "https://zq.titan007.com/*",
     "https://vip.titan007.com/*",
+    "https://1x2.titan007.com/*",
     "https://live.titan007.com/*",
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
@@ -43,6 +44,7 @@
     {
       "matches": [
         "https://zq.titan007.com/analysis/*",
+        "https://1x2.titan007.com/oddslist/*",
         "https://vip.titan007.com/AsianOdds_n.aspx*",
         "https://vip.titan007.com/OverDown_n.aspx*",
         "https://vip.titan007.com/Corner.aspx*"

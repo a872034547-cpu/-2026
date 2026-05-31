@@ -8,7 +8,7 @@ export class ReportGenerator {
     const { matchId, fetchTime, data } = stored;
     if (!data) return { text: '无数据', markdown: '# 无数据', structured: {} };
 
-    const { analysis, asian, overunder, corner } = data;
+    const { analysis, winDrawWin, asian, overunder, corner } = data;
     const home = analysis?.matchInfo?.home || '主队';
     const away = analysis?.matchInfo?.away || '客队';
     const matchTime = analysis?.matchInfo?.time || '';
@@ -32,11 +32,13 @@ export class ReportGenerator {
     sections.push('');
 
     // ========== 赛前简报 ==========
+    sections.push(`## 二、赛前简报（系统分析）`);
     if (analysis?.preBriefing) {
-      sections.push(`## 二、赛前简报（系统分析）`);
       sections.push(`> ${analysis.preBriefing.replace(/\n/g, '\n> ')}`);
-      sections.push('');
+    } else {
+      sections.push(`> 暂无赛前简报数据。可点击“调试”查看原始页面文本长度，确认球探网分析页是否已完整加载。`);
     }
+    sections.push('');
 
     // ========== 联赛战绩 ==========
     sections.push(`## 三、联赛战绩统计`);
@@ -45,40 +47,14 @@ export class ReportGenerator {
 
     // ========== 盘路走势 ==========
     sections.push(`## 四、联赛盘路走势`);
-    const ht = analysis?.handicapTrend;
-    if (ht) {
-      sections.push(`### 🏠 ${home}`);
-      if (ht.home?.winRates?.length > 0) {
-        sections.push(`| 类型 | 赢盘率 |`);
-        sections.push(`|------|--------|`);
-        const labels = ['全场总', '全场主场', '全场客场', '近6场'];
-        ht.home.winRates.forEach((r, i) => { if (r) sections.push(`| ${labels[i]||i} | **${r}%** |`); });
-      }
-      if (ht.home?.bigBallRates?.length > 0) {
-        sections.push(`- 大球率: ${ht.home.bigBallRates.join(' / ')}`);
-      }
-      if (ht.home?.last6Asian) sections.push(`- 近6场亚让走势: \`${ht.home.last6Asian}\``);
-      if (ht.home?.last6OU) sections.push(`- 近6场大小球走势: \`${ht.home.last6OU}\``);
-      if (ht.home?.last6HalfAsian) sections.push(`- 近6场半场亚让: \`${ht.home.last6HalfAsian}\``);
-
-      sections.push(`### ✈️ ${away}`);
-      if (ht.away?.winRates?.length > 0) {
-        sections.push(`| 类型 | 赢盘率 |`);
-        sections.push(`|------|--------|`);
-        const labels = ['全场总', '全场主场', '全场客场', '近6场'];
-        ht.away.winRates.forEach((r, i) => { if (r) sections.push(`| ${labels[i]||i} | **${r}%** |`); });
-      }
-      if (ht.away?.bigBallRates?.length > 0) {
-        sections.push(`- 大球率: ${ht.away.bigBallRates.join(' / ')}`);
-      }
-      if (ht.away?.last6Asian) sections.push(`- 近6场亚让走势: \`${ht.away.last6Asian}\``);
-      if (ht.away?.last6OU) sections.push(`- 近6场大小球走势: \`${ht.away.last6OU}\``);
-    }
+    const ht = analysis?.handicapTrend || {};
+    sections.push(this._formatTrendBlock(home, ht.home, '🏠'));
+    sections.push(this._formatTrendBlock(away, ht.away, '✈️'));
     sections.push('');
 
     // ========== 相同盘路历史 ==========
+    sections.push(`## 五、相同盘口历史走势`);
     if (analysis?.sameHandicapHistory?.length > 0) {
-      sections.push(`## 五、相同盘口历史走势`);
       analysis.sameHandicapHistory.forEach(block => {
         if (!block.handicap) return;
         sections.push(`**初盘: ${block.handicap}**`);
@@ -87,8 +63,10 @@ export class ReportGenerator {
         }
         if (block.last6) sections.push(`- 近6场: \`${block.last6}\``);
       });
-      sections.push('');
+    } else {
+      sections.push(`*暂无相同盘口历史数据。*`);
     }
+    sections.push('');
 
     // ========== 进球数据 ==========
     sections.push(`## 六、进球数据分析`);
@@ -156,8 +134,41 @@ export class ReportGenerator {
       sections.push('');
     }
 
+    // ========== 胜平负 / 欧赔 ==========
+    sections.push(`## 九、胜平负盘口（欧赔 / 1x2）`);
+    if (winDrawWin && !winDrawWin.error && winDrawWin.companies?.length > 0) {
+      const sum = winDrawWin.summary || {};
+      sections.push(`**欧赔公司数**: ${sum.count || winDrawWin.companies.length} 家`);
+      if (sum.averageInitial || sum.averageCurrent) {
+        sections.push(`| 类型 | 主胜 | 平局 | 客胜 |`);
+        sections.push(`|------|------|------|------|`);
+        if (sum.averageInitial) sections.push(`| 初盘平均 | ${sum.averageInitial.win} | ${sum.averageInitial.draw} | ${sum.averageInitial.loss} |`);
+        if (sum.averageCurrent) sections.push(`| 即时平均 | **${sum.averageCurrent.win}** | **${sum.averageCurrent.draw}** | **${sum.averageCurrent.loss}** |`);
+      }
+      if (sum.impliedAverage) {
+        sections.push(`**平均隐含概率**: 主胜 ${sum.impliedAverage.win} / 平局 ${sum.impliedAverage.draw} / 客胜 ${sum.impliedAverage.loss}`);
+      }
+      if (sum.movement) {
+        sections.push(`**赔率变化家数**: 主胜降 ${sum.movement.winDown || 0}/升 ${sum.movement.winUp || 0} | 平局降 ${sum.movement.drawDown || 0}/升 ${sum.movement.drawUp || 0} | 客胜降 ${sum.movement.lossDown || 0}/升 ${sum.movement.lossUp || 0}`);
+      }
+      sections.push('');
+
+      sections.push(`| 公司 | 初主胜 | 初平 | 初客胜 | 即主胜 | 即平 | 即客胜 |`);
+      sections.push(`|------|--------|------|--------|--------|------|--------|`);
+      winDrawWin.companies.forEach(c => {
+        const changed = c.initialWin && (
+          c.initialWin !== c.currentWin || c.initialDraw !== c.currentDraw || c.initialLoss !== c.currentLoss
+        );
+        sections.push(`| ${c.name} | ${c.initialWin || '-'} | ${c.initialDraw || '-'} | ${c.initialLoss || '-'} | **${c.currentWin || '-'}**${changed ? ' ⚠️' : ''} | **${c.currentDraw || '-'}** | **${c.currentLoss || '-'}** |`);
+      });
+    } else {
+      sections.push('*胜平负盘口数据获取失败*');
+      if (winDrawWin?.error) sections.push(`- 错误: ${winDrawWin.error}`);
+    }
+    sections.push('');
+
     // ========== 亚让盘口 ==========
-    sections.push(`## 九、亚让盘口`);
+    sections.push(`## 十、亚让盘口`);
     if (asian && !asian.error) {
       const sum = asian.summary || {};
       sections.push(`**盘口动向**: 升盘 ${sum.up||0} 家 / 降盘 ${sum.down||0} 家 | 高水 ${sum.highWater||0} 家 / 低水 ${sum.lowWater||0} 家`);
@@ -197,7 +208,7 @@ export class ReportGenerator {
     sections.push('');
 
     // ========== 大小球 ==========
-    sections.push(`## 十、大小球（进球数）`);
+    sections.push(`## 十一、大小球（进球数）`);
     if (overunder && !overunder.error) {
       const sum = overunder.summary || {};
       sections.push(`**盘口动向**: 升盘 ${sum.up||0} 家 / 降盘 ${sum.down||0} 家`);
@@ -240,7 +251,7 @@ export class ReportGenerator {
     sections.push('');
 
     // ========== 角球 ==========
-    sections.push(`## 十一、角球盘口`);
+    sections.push(`## 十二、角球盘口`);
     if (corner && !corner.error && corner.companies?.length > 0) {
       sections.push(`| 公司 | 初盘大 | 角球线 | 初盘小 | 即时大 | 即时线 | 即时小 |`);
       sections.push(`|------|--------|--------|--------|--------|--------|--------|`);
@@ -260,14 +271,15 @@ export class ReportGenerator {
     sections.push(`## 📊 AI 分析请求`);
     sections.push(`请你作为专业足球数据分析师，基于以上完整数据对"**${home} vs ${away}**"进行深度分析：`);
     sections.push('');
-    sections.push('**请分析以下6个维度并给出明确推荐：**');
+    sections.push('**请分析以下7个维度并给出明确推荐：**');
     sections.push('');
-    sections.push('1. **亚让盘** - 分析盘口变化、水位流向、升降盘趋势，给出推荐方向及信心度');
-    sections.push('2. **大小球** - 结合进球线变化、双方进球率、近期走势，推荐大/小球');
-    sections.push('3. **角球** - 分析角球盘口是否合理，推荐大/小角球');
-    sections.push('4. **赛前简报解读** - 结合阵容情况（缺阵人数、位置）分析战力影响');
-    sections.push('5. **盘路走势解读** - 分析赢盘率、相同盘口历史数据的参考价值');
-    sections.push('6. **综合推荐** - 给出最终推荐方案（含具体盘口、方向、信心度0-100%）');
+    sections.push('1. **胜平负/欧赔** - 分析主胜、平局、客胜赔率变化、平均隐含概率与市场倾向，给出胜平负方向及信心度');
+    sections.push('2. **亚让盘** - 分析盘口变化、水位流向、升降盘趋势，给出推荐方向及信心度');
+    sections.push('3. **大小球** - 结合进球线变化、双方进球率、近期走势，推荐大/小球');
+    sections.push('4. **角球** - 分析角球盘口是否合理，推荐大/小角球');
+    sections.push('5. **赛前简报解读** - 结合阵容情况（缺阵人数、位置）分析战力影响');
+    sections.push('6. **盘路走势解读** - 分析赢盘率、相同盘口历史数据的参考价值');
+    sections.push('7. **综合推荐** - 给出最终推荐方案（含具体盘口、方向、信心度0-100%）');
     sections.push('');
     sections.push('**输出格式要求**: 结构清晰，每个维度一段，最后给出"最佳推荐"汇总表格');
 
@@ -280,18 +292,61 @@ export class ReportGenerator {
       structured: {
         matchInfo: analysis?.matchInfo,
         home, away,
+        winDrawWin: winDrawWin?.keyOdds,
         asian: asian?.keyOdds,
         overunder: overunder?.keyOdds,
         corner: { mainLine: corner?.mainLine, companies: corner?.companies?.slice(0,3) },
         injuries: analysis?.injuries,
         preBriefing: analysis?.preBriefing,
-        summary: this._quickSummary(analysis, asian, overunder)
+        summary: this._quickSummary(analysis, winDrawWin, asian, overunder)
       }
     };
   }
 
-  _quickSummary(analysis, asian, overunder) {
+  _formatTrendBlock(teamName, trend, icon) {
+    const lines = [`### ${icon} ${teamName}`];
+    let hasData = false;
+
+    const labels = ['全场总', '全场主场', '全场客场', '近6场'];
+    if (Array.isArray(trend?.winRates) && trend.winRates.some(Boolean)) {
+      hasData = true;
+      lines.push(`| 类型 | 赢盘率 |`);
+      lines.push(`|------|--------|`);
+      labels.forEach((label, i) => {
+        const value = trend.winRates[i];
+        lines.push(`| ${label} | ${value ? `**${value}%**` : '-'} |`);
+      });
+    }
+
+    if (Array.isArray(trend?.bigBallRates) && trend.bigBallRates.some(Boolean)) {
+      hasData = true;
+      const bigLabels = ['全场总', '主/客场', '近6场'];
+      const bigText = trend.bigBallRates
+        .map((value, i) => value ? `${bigLabels[i] || `项${i + 1}`}: ${value}%` : '')
+        .filter(Boolean)
+        .join(' / ');
+      if (bigText) lines.push(`- 大球率: ${bigText}`);
+    }
+
+    if (trend?.last6Asian) { hasData = true; lines.push(`- 近6场亚让走势: \`${trend.last6Asian}\``); }
+    if (trend?.last6OU) { hasData = true; lines.push(`- 近6场大小球走势: \`${trend.last6OU}\``); }
+    if (trend?.last6HalfAsian) { hasData = true; lines.push(`- 近6场半场亚让: \`${trend.last6HalfAsian}\``); }
+
+    if (!hasData) {
+      lines.push(`- 盘路走势采集未命中，请打开“调试”查看 analysis._debug.trendTables 输出。`);
+    }
+
+    return lines.join('\n');
+  }
+
+  _quickSummary(analysis, winDrawWin, asian, overunder) {
     const summary = [];
+    if (winDrawWin?.summary) {
+      const s = winDrawWin.summary;
+      const avg = s.averageCurrent ? `即时均赔 ${s.averageCurrent.win}/${s.averageCurrent.draw}/${s.averageCurrent.loss}` : '即时均赔未知';
+      const prob = s.impliedAverage ? `概率 ${s.impliedAverage.win}/${s.impliedAverage.draw}/${s.impliedAverage.loss}` : '';
+      summary.push(`胜平负：${avg}${prob ? '，' + prob : ''}`);
+    }
     if (asian?.summary) {
       const s = asian.summary;
       summary.push(`亚让盘：升${s.up}降${s.down}，高水${s.highWater}低水${s.lowWater}，主流盘${s.mainLine||'未知'}`);

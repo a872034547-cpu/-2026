@@ -143,6 +143,7 @@
 
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
+  #tab-ai.active { display: flex; }
 
   /* Monitor List */
   .monitor-list { display: flex; flex-direction: column; gap: 8px; }
@@ -439,7 +440,7 @@
   </div>
 
   <!-- AI 预测 Tab -->
-  <div class="tab-panel" id="tab-ai" style="display:flex;flex-direction:column;height:calc(100vh - 90px)">
+  <div class="tab-panel" id="tab-ai" style="flex-direction:column;height:calc(100vh - 90px)">
     <!-- 工具栏 -->
     <div style="display:flex;gap:6px;padding:8px 0 6px;flex-shrink:0">
       <button class="btn btn-blue" id="aiPredBtn" style="flex:1">✨ 开始AI预测分析</button>

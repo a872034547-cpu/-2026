@@ -103,6 +103,9 @@ title: ${analysis._debug?.title || 'N/A'}
 textLen: ${analysis._debug?.textLen || 'N/A'}
 tables: ${analysis._debug?.tables || 'N/A'}
 
+=== trendTables ===
+${JSON.stringify(analysis._debug?.trendTables || [], null, 2)}
+
 === matchInfo ===
 ${JSON.stringify(analysis.matchInfo, null, 2)}
 
@@ -120,6 +123,12 @@ ${analysis.preBriefing || '(空)'}
 
 === injuries ===
 ${JSON.stringify(analysis.injuries, null, 2)}
+
+=== winDrawWin summary ===
+${JSON.stringify(resp.data?.data?.winDrawWin?.summary, null, 2)}
+
+=== winDrawWin companies[0] ===
+${JSON.stringify(resp.data?.data?.winDrawWin?.companies?.[0], null, 2)}
 
 === asian companies[0] ===
 ${JSON.stringify(resp.data?.data?.asian?.companies?.[0], null, 2)}`;
@@ -398,7 +407,7 @@ function clearChat() {
 async function renderDataPanel(data) {
   if (!data) return;
   const el = document.getElementById('dataContent');
-  const { analysis, asian, overunder, corner } = data;
+  const { analysis, winDrawWin, asian, overunder, corner } = data;
   const home = analysis?.matchInfo?.home || '主队';
   const away = analysis?.matchInfo?.away || '客队';
   const time = analysis?.matchInfo?.time || '';
@@ -415,6 +424,52 @@ async function renderDataPanel(data) {
       <div class="stat-row"><span class="stat-label">数据更新</span><span class="stat-value">${new Date().toLocaleTimeString('zh-CN')}</span></div>
     </div>
   </div>`;
+
+// 胜平负 / 欧赔
+if (winDrawWin && !winDrawWin.error) {
+  const sum = winDrawWin.summary || {};
+  const companies = winDrawWin.companies || [];
+  html += `<div class="data-section">
+    <div class="section-header">
+      🏆 胜平负盘口（欧赔）
+      <span style="color:#a371f7;font-size:11px">公司:${sum.count || companies.length}${sum.impliedAverage ? ' | 概率 '+sum.impliedAverage.win+'/'+sum.impliedAverage.draw+'/'+sum.impliedAverage.loss : ''}</span>
+    </div>
+    <div class="section-body">`;
+
+  if (sum.averageCurrent || sum.averageInitial) {
+    html += `<table class="odds-table">
+      <tr><th>类型</th><th>主胜</th><th>平局</th><th>客胜</th></tr>
+      ${sum.averageInitial ? `<tr><td class="company">初盘平均</td><td>${sum.averageInitial.win}</td><td>${sum.averageInitial.draw}</td><td>${sum.averageInitial.loss}</td></tr>` : ''}
+      ${sum.averageCurrent ? `<tr><td class="company">即时平均</td><td class="handicap">${sum.averageCurrent.win}</td><td class="handicap">${sum.averageCurrent.draw}</td><td class="handicap">${sum.averageCurrent.loss}</td></tr>` : ''}
+    </table>`;
+  }
+
+  const top3wdw = companies.slice(0, 3);
+  if (top3wdw.length > 0) {
+    html += `<div style="margin-top:8px;color:#8b949e;font-size:11px;margin-bottom:4px">主要公司胜平负</div>
+    <table class="odds-table">
+      <tr><th>公司</th><th>初主</th><th>初平</th><th>初客</th><th>即主</th><th>即平</th><th>即客</th></tr>`;
+    top3wdw.forEach(c => {
+      const changed = c.initialWin && (c.initialWin !== c.currentWin || c.initialDraw !== c.currentDraw || c.initialLoss !== c.currentLoss);
+      html += `<tr>
+        <td class="company">${c.name}</td>
+        <td>${c.initialWin || '-'}</td><td>${c.initialDraw || '-'}</td><td>${c.initialLoss || '-'}</td>
+        <td class="handicap${changed?' changed':''}">${c.currentWin || '-'}${changed?'⚠️':''}</td><td>${c.currentDraw || '-'}</td><td>${c.currentLoss || '-'}</td>
+      </tr>`;
+    });
+    html += `</table>`;
+  }
+
+  if (companies.length > 3) {
+    html += `<div style="margin-top:8px;color:#8b949e;font-size:11px;margin-bottom:4px">所有公司即时胜平负（${companies.length}家）</div>
+    <table class="odds-table"><tr><th>公司</th><th>主胜</th><th>平局</th><th>客胜</th></tr>`;
+    companies.forEach(c => {
+      html += `<tr><td class="company" style="font-size:10px">${c.name}</td><td>${c.currentWin || '-'}</td><td>${c.currentDraw || '-'}</td><td>${c.currentLoss || '-'}</td></tr>`;
+    });
+    html += `</table>`;
+  }
+  html += `</div></div>`;
+}
 
 // 亚让盘
 if (asian && !asian.error) {
