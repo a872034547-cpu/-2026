@@ -120,14 +120,16 @@ export class ReportGenerator {
 
     // 进球时间分布
     const gt = analysis?.goalTimeDistribution || {};
-    if (gt.home || gt.away || gt.rows?.length > 0) {
+    if (gt.home || gt.away || gt.homeFirst || gt.awayFirst || gt.rows?.length > 0 || gt.firstRows?.length > 0) {
       const timeKeys = ['1-10','11-20','21-30','31-40','41-45','46-50','51-60','61-70','71-80','81-90+'];
-      sections.push(`### 进球时间分布`);
-      sections.push(`| 队伍 | 1-10 | 11-20 | 21-30 | 31-40 | 41-45 | 46-50 | 51-60 | 61-70 | 71-80 | 81-90+ |`);
-      sections.push(`|------|------|-------|-------|-------|-------|-------|-------|-------|-------|--------|`);
-      ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${home}${k}`, gt.home?.[k], timeKeys)));
-      ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${away}${k}`, gt.away?.[k], timeKeys)));
-      if (gt.homeFirst || gt.awayFirst) {
+      if (gt.home || gt.away || gt.rows?.length > 0) {
+        sections.push(`### 进球时间分布`);
+        sections.push(`| 队伍 | 1-10 | 11-20 | 21-30 | 31-40 | 41-45 | 46-50 | 51-60 | 61-70 | 71-80 | 81-90+ |`);
+        sections.push(`|------|------|-------|-------|-------|-------|-------|-------|-------|-------|--------|`);
+        ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${home}${k}`, gt.home?.[k], timeKeys)));
+        ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${away}${k}`, gt.away?.[k], timeKeys)));
+      }
+      if (gt.homeFirst || gt.awayFirst || gt.firstRows?.length > 0) {
         sections.push('');
         sections.push(`**第一个进球时间统计**`);
         sections.push(`| 队伍 | 1-10 | 11-20 | 21-30 | 31-40 | 41-45 | 46-50 | 51-60 | 61-70 | 71-80 | 81-90+ |`);

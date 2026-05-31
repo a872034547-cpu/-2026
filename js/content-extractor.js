@@ -271,14 +271,20 @@
     }
 
     // 富统计表：入球分布、半全场、进球数单双、进球时间。旧逻辑没有解析这些表，导致 analysis 页面有数据但报告为空。
+    const tableContextText = tbl => {
+      let ctx = '';
+      let node = tbl.previousElementSibling;
+      for (let step = 0; node && step < 10; step++, node = node.previousElementSibling) ctx = ` ${node.textContent}${ctx}`;
+      return compact(`${ctx} ${tbl.textContent || ''}`);
+    };
     const numericRows = tbl => {
       const out = [];
       Array.from(tbl.querySelectorAll('tr')).forEach(row => {
-        const cells = getCells(row).map(compact).filter(Boolean);
+        const cells = getCells(row).map(c => compact(c).replace(/（/g, '(').replace(/）/g, ')')).filter(Boolean);
         if (!cells.length) return;
         const label = cells[0];
         if (!/^(总|主|客|主场|客场)$/.test(label)) return;
-        const values = cells.slice(1).filter(c => /^-?\d+(?:\.\d+)?(?:\([^)]*\))?$/.test(c) || /^\d+\.\d+%\[\d+场\]$/.test(c));
+        const values = cells.slice(1).filter(c => /^-?\d+(?:\.\d+)?(?:\([^)]*\))?$/.test(c) || /^\d+(?:\.\d+)?%\[\d+场\]$/.test(c));
         if (values.length) out.push({ label, values });
       });
       return out;
@@ -294,49 +300,70 @@
       return obj;
     };
     const parsePercentCell = v => {
-      const s = String(v || '');
+      const s = String(v || '').replace(/（/g, '(').replace(/）/g, ')');
       const m = s.match(/(\d+)\((\d+(?:\.\d+)?)%\)/);
       return m ? { games: m[1], pct: m[2] } : { games: s, pct: '' };
     };
-    const rich = { goalDist: [], halfFull: [], singleDouble: [], goalTime: [] };
+    const richOwner = (tbl, ctx) => {
+      let owner = tableOwner(tbl);
+      const homeName = compact(result.matchInfo.home || '');
+      const awayName = compact(result.matchInfo.away || '');
+      if (!owner && homeName && ctx.includes(homeName) && (!awayName || !ctx.includes(awayName))) owner = 'home';
+      if (!owner && awayName && ctx.includes(awayName) && (!homeName || !ctx.includes(homeName))) owner = 'away';
+      if (!owner && ctx.includes('主队') && !ctx.includes('客队')) owner = 'home';
+      if (!owner && ctx.includes('客队') && !ctx.includes('主队')) owner = 'away';
+      return owner;
+    };
+    const pickRich = (list, owner, fallbackIndex) => {
+      const byOwner = list.find(x => x.owner === owner);
+      if (byOwner) return byOwner.data;
+      const hasOwner = list.some(x => x.owner);
+      return !hasOwner && list[fallbackIndex] ? list[fallbackIndex].data : null;
+    };
+    const rich = { goalDist: [], halfFull: [], singleDouble: [], goalTime: [], firstGoalTime: [] };
     tables.forEach(tbl => {
       const tt = compact(tbl.textContent || '');
+      const ctx = tableContextText(tbl);
       const rows = numericRows(tbl);
       if (!rows.length) return;
-      if (tt.includes('4+上半场下半场') && rows[0].values.length >= 7) {
-        rich.goalDist.push(rowsToObject(rows, ['0球','1球','2球','3球','4+','上半场','下半场']));
-      } else if (tt.includes('半场') && tt.includes('全场') && rows[0].values.length >= 9 && tt.includes('胜胜胜')) {
-        rich.halfFull.push(rowsToObject(rows, ['胜胜','胜和','胜负','和胜','和和','和负','负胜','负和','负负']));
-      } else if (tt.includes('大小走单双') && rows[0].values.length >= 5) {
+      const owner = richOwner(tbl, ctx);
+      if ((/0球1球2球3球4\+/.test(tt) || /入球数.*上半场.*下半场/.test(ctx)) && rows[0].values.length >= 7) {
+        rich.goalDist.push({ owner, data: rowsToObject(rows, ['0球','1球','2球','3球','4+','上半场','下半场']) });
+      } else if ((/胜胜.*胜和.*胜负.*和胜.*和和.*和负.*负胜.*负和.*负负/.test(tt) || (ctx.includes('半全场') && tt.includes('胜胜') && tt.includes('负负'))) && rows[0].values.length >= 9) {
+        rich.halfFull.push({ owner, data: rowsToObject(rows, ['胜胜','胜和','胜负','和胜','和和','和负','负胜','负和','负负']) });
+      } else if ((tt.includes('大小走单双') || (ctx.includes('进球数/单双') && tt.includes('大') && tt.includes('小') && tt.includes('单') && tt.includes('双'))) && rows[0].values.length >= 5) {
         const sdObj = rowsToObject(rows, ['大','小','走','单','双']);
         ['总','主','客'].forEach(k => {
           if (!sdObj[k]) return;
           Object.keys(sdObj[k]).forEach(h => { sdObj[k][h] = parsePercentCell(sdObj[k][h]); });
         });
-        rich.singleDouble.push(sdObj);
-      } else if (tt.includes('1-10') && tt.includes('81-90+') && rows[0].values.length >= 10) {
-        rich.goalTime.push(rowsToObject(rows, ['1-10','11-20','21-30','31-40','41-45','46-50','51-60','61-70','71-80','81-90+']));
+        rich.singleDouble.push({ owner, data: sdObj });
+      } else if (tt.includes('1-10') && (tt.includes('81-90+') || tt.includes('81-90')) && rows[0].values.length >= 10) {
+        const item = { owner, data: rowsToObject(rows, ['1-10','11-20','21-30','31-40','41-45','46-50','51-60','61-70','71-80','81-90+']) };
+        if (/第一个进球|第一個進球|首个进球|首個進球/.test(ctx)) rich.firstGoalTime.push(item);
+        else rich.goalTime.push(item);
       }
     });
-    result.recentGoalDistribution.home = rich.goalDist[0] || null;
-    result.recentGoalDistribution.away = rich.goalDist[1] || null;
-    result.halfFull.home = rich.halfFull[0] || null;
-    result.halfFull.away = rich.halfFull[1] || null;
-    result.goalSingleDouble.home = rich.singleDouble[0] || null;
-    result.goalSingleDouble.away = rich.singleDouble[1] || null;
-    if (rich.singleDouble[0]?.['总']) {
-      const hsd = rich.singleDouble[0]['总'];
+    result.recentGoalDistribution.home = pickRich(rich.goalDist, 'home', 0);
+    result.recentGoalDistribution.away = pickRich(rich.goalDist, 'away', 1);
+    result.halfFull.home = pickRich(rich.halfFull, 'home', 0);
+    result.halfFull.away = pickRich(rich.halfFull, 'away', 1);
+    result.goalSingleDouble.home = pickRich(rich.singleDouble, 'home', 0);
+    result.goalSingleDouble.away = pickRich(rich.singleDouble, 'away', 1);
+    if (result.goalSingleDouble.home?.['总']) {
+      const hsd = result.goalSingleDouble.home['总'];
       result.goalSingleDouble.homeTotal = { big: hsd['大'], small: hsd['小'], draw: hsd['走'], odd: hsd['单'], even: hsd['双'] };
     }
-    if (rich.singleDouble[1]?.['总']) {
-      const asd = rich.singleDouble[1]['总'];
+    if (result.goalSingleDouble.away?.['总']) {
+      const asd = result.goalSingleDouble.away['总'];
       result.goalSingleDouble.awayTotal = { big: asd['大'], small: asd['小'], draw: asd['走'], odd: asd['单'], even: asd['双'] };
     }
-    result.goalTimeDistribution.home = rich.goalTime[0] || null;
-    result.goalTimeDistribution.homeFirst = rich.goalTime[1] || null;
-    result.goalTimeDistribution.away = rich.goalTime[2] || null;
-    result.goalTimeDistribution.awayFirst = rich.goalTime[3] || null;
-    result.goalTimeDistribution.rows = rich.goalTime;
+    result.goalTimeDistribution.home = pickRich(rich.goalTime, 'home', 0);
+    result.goalTimeDistribution.away = pickRich(rich.goalTime, 'away', 1);
+    result.goalTimeDistribution.homeFirst = pickRich(rich.firstGoalTime, 'home', 0);
+    result.goalTimeDistribution.awayFirst = pickRich(rich.firstGoalTime, 'away', 1);
+    result.goalTimeDistribution.rows = rich.goalTime.map(x => x.data);
+    result.goalTimeDistribution.firstRows = rich.firstGoalTime.map(x => x.data);
 
     const safeAvg = (a, b) => {
       a = parseFloat(a); b = parseFloat(b);
@@ -360,6 +387,63 @@
     };
     result.seasonComparison.home = calcSeason(result.homeStats, 'home');
     result.seasonComparison.away = calcSeason(result.awayStats, 'away');
+
+    const cellNumber = cell => {
+      const clean = compact(cell).replace(/\[\d+(?:\.\d+)?场\]/g, '');
+      const nums = clean.match(/\d+(?:\.\d+)?/g) || [];
+      return nums.find(n => n.includes('.')) || nums[nums.length - 1] || '';
+    };
+    const readLabeledNumber = (cells, labels) => {
+      for (let ci = 0; ci < cells.length; ci++) {
+        const c = compact(cells[ci]);
+        if (!labels.some(label => c.includes(label))) continue;
+        const inline = cellNumber(c);
+        if (inline) return inline;
+        for (let j = ci + 1; j < Math.min(cells.length, ci + 5); j++) {
+          const n = cellNumber(cells[j]);
+          if (n) return n;
+        }
+      }
+      return '';
+    };
+    const parseGoalStatTable = tbl => {
+      const ctx = tableContextText(tbl);
+      if (!/(得失球统计|平均入球|平均进球|平均失球|场均入球|场均进球|场均失球)/.test(ctx)) return null;
+      const flat = [];
+      Array.from(tbl.querySelectorAll('tr')).forEach(row => getCells(row).forEach(cell => flat.push(cell)));
+      const parsed = {
+        owner: ctx.includes('主队得失球统计') ? 'home' : (ctx.includes('客队得失球统计') ? 'away' : richOwner(tbl, ctx)),
+        games: (ctx.match(/\[(\d+(?:\.\d+)?)场\]/) || [,''])[1],
+        goalsFor: readLabeledNumber(flat, ['入球数','进球数','总入球','总进球']),
+        goalsAgainst: readLabeledNumber(flat, ['失球数','总失球']),
+        avgGoal: readLabeledNumber(flat, ['平均入球','平均进球','场均入球','场均进球','均入球','均进球']),
+        avgLoss: readLabeledNumber(flat, ['平均失球','场均失球','均失球'])
+      };
+      return (parsed.avgGoal || parsed.avgLoss || parsed.goalsFor || parsed.goalsAgainst) ? parsed : null;
+    };
+    const mergeGoalStat = (side, parsed) => {
+      if (!parsed) return;
+      const comp = result.seasonComparison[side] || { record: {}, goals: {} };
+      comp.record = comp.record || {};
+      comp.goals = comp.goals || {};
+      const total = Object.assign({}, comp.goals.total || {});
+      if (parsed.games && !total.played) total.played = parsed.games;
+      if (parsed.goalsFor) total.goalsFor = parsed.goalsFor;
+      if (parsed.goalsAgainst) total.goalsAgainst = parsed.goalsAgainst;
+      if (parsed.avgGoal) total.avgGoal = parsed.avgGoal;
+      else if (!total.avgGoal) total.avgGoal = safeAvg(total.goalsFor, total.played);
+      if (parsed.avgLoss) total.avgLoss = parsed.avgLoss;
+      else if (!total.avgLoss) total.avgLoss = safeAvg(total.goalsAgainst, total.played);
+      comp.goals.total = total;
+      result.seasonComparison[side] = comp;
+    };
+    const goalStatTables = Array.from(tables).map(parseGoalStatTable).filter(Boolean);
+    const goalOwnerKnown = goalStatTables.some(x => x.owner);
+    const homeGoalStat = goalStatTables.find(x => x.owner === 'home') || (!goalOwnerKnown ? goalStatTables[0] : null);
+    const awayGoalStat = goalStatTables.find(x => x.owner === 'away') || (!goalOwnerKnown ? goalStatTables[1] : null);
+    mergeGoalStat('home', homeGoalStat);
+    mergeGoalStat('away', awayGoalStat);
+
     result.dataComparison.home = Object.assign(result.dataComparison.home || {}, result.seasonComparison.home.goals.total || {});
     result.dataComparison.away = Object.assign(result.dataComparison.away || {}, result.seasonComparison.away.goals.total || {});
 
@@ -376,10 +460,14 @@
         awayFor: Number.isFinite(af) ? af : undefined,
         awayAgainst: Number.isFinite(aa) ? aa : undefined,
         leagueAvg: 1.35,
-        source: 'analysis-season-comparison'
+        source: goalStatTables.length ? 'analysis-goal-stat-table' : 'analysis-season-comparison'
       };
     }
-    result._debug = Object.assign(result._debug || {}, { richTables: { goalDist: rich.goalDist.length, halfFull: rich.halfFull.length, singleDouble: rich.singleDouble.length, goalTime: rich.goalTime.length }, recentStats: result.recentStats || null });
+    result._debug = Object.assign(result._debug || {}, {
+      richTables: { goalDist: rich.goalDist.length, halfFull: rich.halfFull.length, singleDouble: rich.singleDouble.length, goalTime: rich.goalTime.length, firstGoalTime: rich.firstGoalTime.length },
+      goalStatTables: goalStatTables.map(x => ({ owner: x.owner, games: x.games, avgGoal: x.avgGoal, avgLoss: x.avgLoss, goalsFor: x.goalsFor, goalsAgainst: x.goalsAgainst })),
+      recentStats: result.recentStats || null
+    });
 
     return result;
   }

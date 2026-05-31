@@ -496,17 +496,27 @@ async function handleMessage(msg, sender, sendResponse) {
   }
 }
 
-function hasAnalysisRichData(analysis) {
-  if (!analysis || analysis.error) return false;
+function analysisRichScore(analysis) {
+  if (!analysis || analysis.error) return -1;
   const richTables = analysis._debug?.richTables || {};
-  return !!(
-    analysis.recentStats ||
-    analysis.recentGoalDistribution?.home || analysis.recentGoalDistribution?.away ||
-    analysis.halfFull?.home || analysis.halfFull?.away ||
-    analysis.goalSingleDouble?.home || analysis.goalSingleDouble?.away ||
-    analysis.goalTimeDistribution?.home || analysis.goalTimeDistribution?.away ||
-    Object.values(richTables).some(v => Number(v) > 0)
-  );
+  let score = 0;
+  score += (Number(richTables.goalDist) || 0) * 4;
+  score += (Number(richTables.halfFull) || 0) * 3;
+  score += (Number(richTables.singleDouble) || 0) * 3;
+  score += (Number(richTables.goalTime) || 0) * 3;
+  score += (Number(richTables.firstGoalTime) || 0) * 2;
+  if (analysis.recentGoalDistribution?.home || analysis.recentGoalDistribution?.away) score += 4;
+  if (analysis.halfFull?.home || analysis.halfFull?.away) score += 3;
+  if (analysis.goalSingleDouble?.home || analysis.goalSingleDouble?.away) score += 3;
+  if (analysis.goalTimeDistribution?.home || analysis.goalTimeDistribution?.away) score += 3;
+  if (analysis.goalTimeDistribution?.homeFirst || analysis.goalTimeDistribution?.awayFirst) score += 2;
+  if (analysis.seasonComparison?.home?.goals?.total || analysis.seasonComparison?.away?.goals?.total) score += 1;
+  if (analysis.recentStats) score += 1;
+  return score;
+}
+
+function hasAnalysisRichData(analysis) {
+  return analysisRichScore(analysis) > 0;
 }
 
 async function extractAnalysisWithFallback(matchId) {
@@ -517,7 +527,6 @@ async function extractAnalysisWithFallback(matchId) {
 
   try {
     primary = await extractOneTab(cnUrl, 'analysis');
-    if (hasAnalysisRichData(primary)) return primary;
   } catch (e) {
     primaryErr = e;
   }
@@ -525,12 +534,17 @@ async function extractAnalysisWithFallback(matchId) {
   try {
     const fallback = await extractOneTab(sbUrl, 'analysis');
     if (fallback && !fallback.error) {
+      const primaryScore = analysisRichScore(primary);
+      const fallbackScore = analysisRichScore(fallback);
       fallback._debug = Object.assign({}, fallback._debug || {}, {
         fallbackFrom: 'cn.htm',
+        primaryRichScore: primaryScore,
+        fallbackRichScore: fallbackScore,
         primaryRichTables: primary?._debug?.richTables || null,
         primaryError: primaryErr?.message || null
       });
-      if (hasAnalysisRichData(fallback) || !primary) return fallback;
+      // sb.htm 经常比 cn.htm 多“入球分布/半全场/进球时间/得失球统计”。只要 sb 的富统计更完整，就优先使用 sb。
+      if (!primary || fallbackScore > primaryScore || (fallbackScore >= 6 && primaryScore <= 2)) return fallback;
     }
   } catch (e) {
     if (!primary) throw (primaryErr || e);
@@ -1273,15 +1287,25 @@ function extractPageData(dataType) {
     }
 
     // ---- 富统计表：入球分布 / 半全场 / 进球数单双 / 进球时间 ----
+    var tableContextText = function(tbl) {
+      var ctx = '';
+      var node = tbl.previousElementSibling;
+      for (var step = 0; node && step < 10; step++, node = node.previousElementSibling) ctx = ' ' + node.textContent + ctx;
+      return compact(ctx + ' ' + (tbl.textContent || ''));
+    };
     var numericRows = function(tbl) {
       var out = [];
       var rows = tbl.querySelectorAll('tr');
       for (var ri = 0; ri < rows.length; ri++) {
-        var cells = getCells(rows[ri]).map(function(c) { return compact(c); }).filter(Boolean);
+        var cells = getCells(rows[ri]).map(function(c) { return compact(c).replace(/（/g, '(').replace(/）/g, ')'); }).filter(Boolean);
         if (!cells.length) continue;
         var label = cells[0];
         if (!/^(总|主|客|主场|客场)$/.test(label)) continue;
-        var vals = cells.slice(1).filter(function(c) { return /^-?\d+(?:\.\d+)?(?:\([^)]*\))?$/.test(c) || /^\d+\.\d+%\[\d+场\]$/.test(c); });
+        var vals = [];
+        for (var vi = 1; vi < cells.length; vi++) {
+          var cv = cells[vi];
+          if (/^-?\d+(?:\.\d+)?(?:\([^)]*\))?$/.test(cv) || /^\d+(?:\.\d+)?%\[\d+场\]$/.test(cv)) vals.push(cv);
+        }
         if (vals.length) out.push({ label: label, values: vals });
       }
       return out;
@@ -1297,52 +1321,78 @@ function extractPageData(dataType) {
       return obj;
     };
     var parsePercentCell = function(v) {
-      var s = String(v || '');
+      var s = String(v || '').replace(/（/g, '(').replace(/）/g, ')');
       var m = s.match(/(\d+)\((\d+(?:\.\d+)?)%\)/);
       return m ? { games: m[1], pct: m[2] } : { games: s, pct: '' };
     };
-    var rich = { goalDist: [], halfFull: [], singleDouble: [], goalTime: [] };
+    var richOwner = function(tbl, ctx) {
+      var owner = tableOwner(tbl);
+      var homeName = compact(result.matchInfo.home || '');
+      var awayName = compact(result.matchInfo.away || '');
+      if (!owner && homeName && ctx.indexOf(homeName) >= 0 && (!awayName || ctx.indexOf(awayName) < 0)) owner = 'home';
+      if (!owner && awayName && ctx.indexOf(awayName) >= 0 && (!homeName || ctx.indexOf(homeName) < 0)) owner = 'away';
+      if (!owner && ctx.indexOf('主队') >= 0 && ctx.indexOf('客队') < 0) owner = 'home';
+      if (!owner && ctx.indexOf('客队') >= 0 && ctx.indexOf('主队') < 0) owner = 'away';
+      return owner;
+    };
+    var pickRich = function(list, owner, fallbackIndex) {
+      var hasOwner = false;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].owner) hasOwner = true;
+        if (list[i].owner === owner) return list[i].data;
+      }
+      return !hasOwner && list[fallbackIndex] ? list[fallbackIndex].data : null;
+    };
+    var rich = { goalDist: [], halfFull: [], singleDouble: [], goalTime: [], firstGoalTime: [] };
     for (var rti = 0; rti < allTables.length; rti++) {
       var tbl = allTables[rti];
       var tt2 = compact(tbl.textContent || '');
+      var ctx2 = tableContextText(tbl);
       var rows2 = numericRows(tbl);
       if (!rows2.length) continue;
-      if (tt2.indexOf('4+上半场下半场') >= 0 && rows2[0].values.length >= 7) {
-        rich.goalDist.push(rowsToObject(rows2, ['0球','1球','2球','3球','4+','上半场','下半场']));
-      } else if (tt2.indexOf('半场') >= 0 && tt2.indexOf('全场') >= 0 && rows2[0].values.length >= 9 && tt2.indexOf('胜胜胜') >= 0) {
-        rich.halfFull.push(rowsToObject(rows2, ['胜胜','胜和','胜负','和胜','和和','和负','负胜','负和','负负']));
-      } else if (tt2.indexOf('大小走单双') >= 0 && rows2[0].values.length >= 5) {
+      var owner2 = richOwner(tbl, ctx2);
+      var item = null;
+      if ((/0球1球2球3球4\+/.test(tt2) || /入球数.*上半场.*下半场/.test(ctx2)) && rows2[0].values.length >= 7) {
+        item = { owner: owner2, data: rowsToObject(rows2, ['0球','1球','2球','3球','4+','上半场','下半场']) };
+        rich.goalDist.push(item);
+      } else if ((/胜胜.*胜和.*胜负.*和胜.*和和.*和负.*负胜.*负和.*负负/.test(tt2) || (ctx2.indexOf('半全场') >= 0 && tt2.indexOf('胜胜') >= 0 && tt2.indexOf('负负') >= 0)) && rows2[0].values.length >= 9) {
+        item = { owner: owner2, data: rowsToObject(rows2, ['胜胜','胜和','胜负','和胜','和和','和负','负胜','负和','负负']) };
+        rich.halfFull.push(item);
+      } else if ((tt2.indexOf('大小走单双') >= 0 || (ctx2.indexOf('进球数/单双') >= 0 && tt2.indexOf('大') >= 0 && tt2.indexOf('小') >= 0 && tt2.indexOf('单') >= 0 && tt2.indexOf('双') >= 0)) && rows2[0].values.length >= 5) {
         var sdObj = rowsToObject(rows2, ['大','小','走','单','双']);
         ['总','主','客'].forEach(function(k) {
           if (!sdObj[k]) return;
           Object.keys(sdObj[k]).forEach(function(h) { sdObj[k][h] = parsePercentCell(sdObj[k][h]); });
         });
-        rich.singleDouble.push(sdObj);
-      } else if (tt2.indexOf('1-10') >= 0 && tt2.indexOf('81-90+') >= 0 && rows2[0].values.length >= 10) {
-        rich.goalTime.push(rowsToObject(rows2, ['1-10','11-20','21-30','31-40','41-45','46-50','51-60','61-70','71-80','81-90+']));
+        rich.singleDouble.push({ owner: owner2, data: sdObj });
+      } else if (tt2.indexOf('1-10') >= 0 && (tt2.indexOf('81-90+') >= 0 || tt2.indexOf('81-90') >= 0) && rows2[0].values.length >= 10) {
+        item = { owner: owner2, data: rowsToObject(rows2, ['1-10','11-20','21-30','31-40','41-45','46-50','51-60','61-70','71-80','81-90+']) };
+        if (/第一个进球|第一個進球|首个进球|首個進球/.test(ctx2)) rich.firstGoalTime.push(item);
+        else rich.goalTime.push(item);
       }
     }
-    result.recentGoalDistribution.home = rich.goalDist[0] || null;
-    result.recentGoalDistribution.away = rich.goalDist[1] || null;
-    result.halfFull.home = rich.halfFull[0] || null;
-    result.halfFull.away = rich.halfFull[1] || null;
-    result.goalSingleDouble.home = rich.singleDouble[0] || null;
-    result.goalSingleDouble.away = rich.singleDouble[1] || null;
+    result.recentGoalDistribution.home = pickRich(rich.goalDist, 'home', 0);
+    result.recentGoalDistribution.away = pickRich(rich.goalDist, 'away', 1);
+    result.halfFull.home = pickRich(rich.halfFull, 'home', 0);
+    result.halfFull.away = pickRich(rich.halfFull, 'away', 1);
+    result.goalSingleDouble.home = pickRich(rich.singleDouble, 'home', 0);
+    result.goalSingleDouble.away = pickRich(rich.singleDouble, 'away', 1);
     // 兼容旧报告字段
-    if (rich.singleDouble[0] && rich.singleDouble[0]['总']) {
-      var hsd = rich.singleDouble[0]['总'];
+    if (result.goalSingleDouble.home && result.goalSingleDouble.home['总']) {
+      var hsd = result.goalSingleDouble.home['总'];
       result.goalSingleDouble.homeTotal = { big: hsd['大'], small: hsd['小'], draw: hsd['走'], odd: hsd['单'], even: hsd['双'] };
     }
-    if (rich.singleDouble[1] && rich.singleDouble[1]['总']) {
-      var asd = rich.singleDouble[1]['总'];
+    if (result.goalSingleDouble.away && result.goalSingleDouble.away['总']) {
+      var asd = result.goalSingleDouble.away['总'];
       result.goalSingleDouble.awayTotal = { big: asd['大'], small: asd['小'], draw: asd['走'], odd: asd['单'], even: asd['双'] };
     }
-    result.goalTimeDistribution.home = rich.goalTime[0] || null;
-    result.goalTimeDistribution.homeFirst = rich.goalTime[1] || null;
-    result.goalTimeDistribution.away = rich.goalTime[2] || null;
-    result.goalTimeDistribution.awayFirst = rich.goalTime[3] || null;
-    result.goalTimeDistribution.rows = rich.goalTime;
-    result._debug.richTables = { goalDist: rich.goalDist.length, halfFull: rich.halfFull.length, singleDouble: rich.singleDouble.length, goalTime: rich.goalTime.length };
+    result.goalTimeDistribution.home = pickRich(rich.goalTime, 'home', 0);
+    result.goalTimeDistribution.away = pickRich(rich.goalTime, 'away', 1);
+    result.goalTimeDistribution.homeFirst = pickRich(rich.firstGoalTime, 'home', 0);
+    result.goalTimeDistribution.awayFirst = pickRich(rich.firstGoalTime, 'away', 1);
+    result.goalTimeDistribution.rows = rich.goalTime.map(function(x) { return x.data; });
+    result.goalTimeDistribution.firstRows = rich.firstGoalTime.map(function(x) { return x.data; });
+    result._debug.richTables = { goalDist: rich.goalDist.length, halfFull: rich.halfFull.length, singleDouble: rich.singleDouble.length, goalTime: rich.goalTime.length, firstGoalTime: rich.firstGoalTime.length };
 
     // ---- 缺阵球员 ----
     var injRe = /(\d{1,3})\s+\(([^)]+)\)\s+([^\n]{2,30})\n\s*([^\n]{2,30})/g;
@@ -1378,35 +1428,103 @@ function extractPageData(dataType) {
     var briefM = text.match(/赛前简报\s*\n([\s\S]{50,2000}?)(?:\n##|\n本赛季|\n\*\*)/);
     if (briefM) result.preBriefing = briefM[1].trim();
 
-    // ---- 本赛季数据统计比较 ----
+    // ---- 本赛季数据统计比较 / 主客队得失球统计 ----
     var bracketNums = [];
     var bnRe = /\[(\d+\.?\d*)\s*(?:场)?\]/g;
     while ((rm = bnRe.exec(text)) !== null) bracketNums.push(rm[1]);
     result.dataComparison.allBracketNumbers = bracketNums.slice(0, 80);
     result.dataComparison.allNumbers = result.dataComparison.allBracketNumbers;
 
+    var safeAvgGoal = function(a, b) { a = parseFloat(a); b = parseFloat(b); return (isFinite(a) && isFinite(b) && b > 0) ? (a / b).toFixed(2) : ''; };
     var calcSeason = function(stats, venueKey) {
       var src = stats || {};
       var total = src.total || {};
       var venue = src[venueKey] || {};
       var last6 = src.last6 || {};
-      var safeAvg = function(a, b) { a = parseFloat(a); b = parseFloat(b); return (isFinite(a) && isFinite(b) && b > 0) ? (a / b).toFixed(2) : ''; };
       return {
         record: {
           total: total.played ? { winPct: total.winRate || '', winGames: total.win || '', drawGames: total.draw || '', lossGames: total.loss || '' } : null,
           venue: venue.played ? { winPct: venue.winRate || '', winGames: venue.win || '', drawGames: venue.draw || '', lossGames: venue.loss || '' } : null
         },
         goals: {
-          total: total.played ? { goalsFor: total.goalsFor || '', goalsAgainst: total.goalsAgainst || '', avgGoal: safeAvg(total.goalsFor, total.played), avgLoss: safeAvg(total.goalsAgainst, total.played) } : null,
-          venue: venue.played ? { goalsFor: venue.goalsFor || '', goalsAgainst: venue.goalsAgainst || '', avgGoal: safeAvg(venue.goalsFor, venue.played), avgLoss: safeAvg(venue.goalsAgainst, venue.played) } : null,
-          last6: last6.played ? { goalsFor: last6.goalsFor || '', goalsAgainst: last6.goalsAgainst || '', avgGoal: safeAvg(last6.goalsFor, last6.played), avgLoss: safeAvg(last6.goalsAgainst, last6.played) } : null
+          total: total.played ? { goalsFor: total.goalsFor || '', goalsAgainst: total.goalsAgainst || '', avgGoal: safeAvgGoal(total.goalsFor, total.played), avgLoss: safeAvgGoal(total.goalsAgainst, total.played) } : null,
+          venue: venue.played ? { goalsFor: venue.goalsFor || '', goalsAgainst: venue.goalsAgainst || '', avgGoal: safeAvgGoal(venue.goalsFor, venue.played), avgLoss: safeAvgGoal(venue.goalsAgainst, venue.played) } : null,
+          last6: last6.played ? { goalsFor: last6.goalsFor || '', goalsAgainst: last6.goalsAgainst || '', avgGoal: safeAvgGoal(last6.goalsFor, last6.played), avgLoss: safeAvgGoal(last6.goalsAgainst, last6.played) } : null
         }
       };
     };
     result.seasonComparison.home = calcSeason(result.homeStats, 'home');
     result.seasonComparison.away = calcSeason(result.awayStats, 'away');
+
+    var cellNumber = function(cell) {
+      var clean = compact(cell).replace(/\[\d+(?:\.\d+)?场\]/g, '');
+      var nums = clean.match(/\d+(?:\.\d+)?/g) || [];
+      for (var ni = 0; ni < nums.length; ni++) if (nums[ni].indexOf('.') >= 0) return nums[ni];
+      return nums.length ? nums[nums.length - 1] : '';
+    };
+    var readLabeledNumber = function(cells, labels) {
+      for (var ci = 0; ci < cells.length; ci++) {
+        var c = compact(cells[ci]);
+        var hit = false;
+        for (var li = 0; li < labels.length; li++) if (c.indexOf(labels[li]) >= 0) hit = true;
+        if (!hit) continue;
+        var inline = cellNumber(c);
+        if (inline) return inline;
+        for (var j = ci + 1; j < Math.min(cells.length, ci + 5); j++) {
+          var n = cellNumber(cells[j]);
+          if (n) return n;
+        }
+      }
+      return '';
+    };
+    var parseGoalStatTable = function(tbl) {
+      var ctx = tableContextText(tbl);
+      if (!/(得失球统计|平均入球|平均进球|平均失球|场均入球|场均进球|场均失球)/.test(ctx)) return null;
+      var flat = [];
+      var rows = tbl.querySelectorAll('tr');
+      for (var ri = 0; ri < rows.length; ri++) {
+        var cells = getCells(rows[ri]);
+        for (var ci = 0; ci < cells.length; ci++) flat.push(cells[ci]);
+      }
+      var parsed = {
+        owner: ctx.indexOf('主队得失球统计') >= 0 ? 'home' : (ctx.indexOf('客队得失球统计') >= 0 ? 'away' : richOwner(tbl, ctx)),
+        games: (ctx.match(/\[(\d+(?:\.\d+)?)场\]/) || [,''])[1],
+        goalsFor: readLabeledNumber(flat, ['入球数','进球数','总入球','总进球']),
+        goalsAgainst: readLabeledNumber(flat, ['失球数','总失球']),
+        avgGoal: readLabeledNumber(flat, ['平均入球','平均进球','场均入球','场均进球','均入球','均进球']),
+        avgLoss: readLabeledNumber(flat, ['平均失球','场均失球','均失球'])
+      };
+      return (parsed.avgGoal || parsed.avgLoss || parsed.goalsFor || parsed.goalsAgainst) ? parsed : null;
+    };
+    var mergeGoalStat = function(side, parsed) {
+      if (!parsed) return;
+      var comp = result.seasonComparison[side] || { record: {}, goals: {} };
+      comp.record = comp.record || {};
+      comp.goals = comp.goals || {};
+      var total = Object.assign({}, comp.goals.total || {});
+      if (parsed.games && !total.played) total.played = parsed.games;
+      if (parsed.goalsFor) total.goalsFor = parsed.goalsFor;
+      if (parsed.goalsAgainst) total.goalsAgainst = parsed.goalsAgainst;
+      if (parsed.avgGoal) total.avgGoal = parsed.avgGoal;
+      else if (!total.avgGoal) total.avgGoal = safeAvgGoal(total.goalsFor, total.played);
+      if (parsed.avgLoss) total.avgLoss = parsed.avgLoss;
+      else if (!total.avgLoss) total.avgLoss = safeAvgGoal(total.goalsAgainst, total.played);
+      comp.goals.total = total;
+      result.seasonComparison[side] = comp;
+    };
+    var goalStatTables = [];
+    for (var gti = 0; gti < allTables.length; gti++) {
+      var gst = parseGoalStatTable(allTables[gti]);
+      if (gst) goalStatTables.push(gst);
+    }
+    var homeGoalStat = goalStatTables.filter(function(x) { return x.owner === 'home'; })[0] || (!goalStatTables.some(function(x) { return x.owner; }) ? goalStatTables[0] : null);
+    var awayGoalStat = goalStatTables.filter(function(x) { return x.owner === 'away'; })[0] || (!goalStatTables.some(function(x) { return x.owner; }) ? goalStatTables[1] : null);
+    mergeGoalStat('home', homeGoalStat);
+    mergeGoalStat('away', awayGoalStat);
+
     result.dataComparison.home = Object.assign(result.dataComparison.home || {}, result.seasonComparison.home.goals.total || {});
     result.dataComparison.away = Object.assign(result.dataComparison.away || {}, result.seasonComparison.away.goals.total || {});
+    result._debug.goalStatTables = goalStatTables.map(function(x) { return { owner: x.owner, games: x.games, avgGoal: x.avgGoal, avgLoss: x.avgLoss, goalsFor: x.goalsFor, goalsAgainst: x.goalsAgainst }; });
 
     var homeGoals = result.seasonComparison.home.goals.total || {};
     var awayGoals = result.seasonComparison.away.goals.total || {};
@@ -1421,7 +1539,7 @@ function extractPageData(dataType) {
         awayFor: isFinite(af) ? af : undefined,
         awayAgainst: isFinite(aa) ? aa : undefined,
         leagueAvg: 1.35,
-        source: 'analysis-season-comparison'
+        source: goalStatTables.length ? 'analysis-goal-stat-table' : 'analysis-season-comparison'
       };
     }
 
