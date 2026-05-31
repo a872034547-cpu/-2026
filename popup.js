@@ -232,7 +232,7 @@ async function loadHistory() {
 
   let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
     <span style="font-size:11px;color:#8b949e">${history.length} 条记录</span>
-    <button class="btn btn-sm" style="background:#21262d;border:1px solid #f85149;color:#f85149" onclick="clearHistory()">清除记录</button>
+    <button class="btn btn-sm" style="background:#21262d;border:1px solid #f85149;color:#f85149" data-action="clearHistory">清除记录</button>
   </div>`;
 
   history.slice(0, 30).forEach(h => {
@@ -254,7 +254,7 @@ async function loadHistory() {
           <input type="text" placeholder="填写实际结果复盘..." id="review_${h.id}"
             style="flex:1;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;padding:3px 6px;font-size:11px"
             value="${h.actualResult || ''}">
-          <button class="btn btn-sm" style="background:#238636;color:#fff" onclick="saveReview(${h.id})">保存</button>
+          <button class="btn btn-sm" style="background:#238636;color:#fff" data-action="saveReview" data-id="${h.id}">保存</button>
         </div>
       </div>
     </div>`;
@@ -263,18 +263,42 @@ async function loadHistory() {
   el.innerHTML = html;
 }
 
-window.saveReview = async function(id) {
-  const input = document.getElementById(`review_${id}`);
-  if (!input) return;
-  await sendMsg({ type: 'UPDATE_REVIEW', id, actualResult: input.value, review: '' });
-  showAlert('✅ 复盘记录已保存', 'success', 2000);
-};
+// 事件委托：处理动态生成的按钮点击
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+  const id = btn.dataset.id;
 
-window.clearHistory = async function() {
-  if (!confirm('确定清除所有预测记录？')) return;
-  await chrome.storage.local.remove('pred_history');
-  loadHistory();
-};
+  switch (action) {
+    case 'saveReview': {
+      const input = document.getElementById(`review_${id}`);
+      if (!input) return;
+      await sendMsg({ type: 'UPDATE_REVIEW', id: Number(id), actualResult: input.value, review: '' });
+      showAlert('✅ 复盘记录已保存', 'success', 2000);
+      break;
+    }
+    case 'clearHistory': {
+      if (!confirm('确定清除所有预测记录？')) return;
+      await chrome.storage.local.remove('pred_history');
+      loadHistory();
+      break;
+    }
+    case 'selectMatch': {
+      currentMatchId = id;
+      document.getElementById('matchIdInput').value = id;
+      await loadDataForMatch(id);
+      switchTab('data');
+      break;
+    }
+    case 'stopMonitor': {
+      await sendMsg({ type: 'STOP_MONITOR', matchId: id });
+      showAlert('已停止监控', 'info', 2000);
+      await loadMonitorList();
+      break;
+    }
+  }
+});
 
 // ===== AI 对话聊天系统 =====
 let chatHistory = [];       // [{role, content}]
@@ -635,26 +659,13 @@ async function loadMonitorList() {
         <div class="monitor-meta">ID: ${matchId} | 最后更新: ${fetchTime}</div>
       </div>
       <div class="monitor-actions">
-        <button class="btn btn-blue btn-sm" onclick="selectMatch('${matchId}')">查看</button>
-        <button class="btn btn-sm" style="background:#2d1a1a;border:1px solid #f85149;color:#f85149" onclick="stopMonitor('${matchId}')">停止</button>
+        <button class="btn btn-blue btn-sm" data-action="selectMatch" data-id="${matchId}">查看</button>
+        <button class="btn btn-sm" style="background:#2d1a1a;border:1px solid #f85149;color:#f85149" data-action="stopMonitor" data-id="${matchId}">停止</button>
       </div>
     </div>`;
   }
   el.innerHTML = html;
 }
-
-window.selectMatch = async function(matchId) {
-  currentMatchId = matchId;
-  document.getElementById('matchIdInput').value = matchId;
-  await loadDataForMatch(matchId);
-  switchTab('data');
-};
-
-window.stopMonitor = async function(matchId) {
-  await sendMsg({ type: 'STOP_MONITOR', matchId });
-  await loadMonitorList();
-  showAlert(`已停止监控 ${matchId}`, 'info');
-};
 
 // ===== 工具函数 =====
 function sendMsg(msg) {

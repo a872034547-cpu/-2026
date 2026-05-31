@@ -392,7 +392,7 @@ function extractPageData(dataType) {
         for (var ci = 0; ci < tds.length; ci++) cells.push(tds[ci].textContent.trim().replace(/\s+/g,''));
         if (cells.length < 5) continue;
         var lbl = cells[0];
-        if (lbl==='总' && /^\d+$/.test(cells[1]) && parseInt(cells[1])>=5) {
+        if (lbl==='总' && /^\d+$/.test(cells[1]) && parseInt(cells[1])>=1) {
           statsObj.total = { played:cells[1], win:cells[2], draw:cells[3], loss:cells[4],
             goalsFor:cells[5]||'', goalsAgainst:cells[6]||'', diff:cells[7]||'',
             points:cells[8]||'', rank:cells[9]||'', winRate:cells[10]||'' };
@@ -410,16 +410,16 @@ function extractPageData(dataType) {
             goalsFor:cells[5]||'', goalsAgainst:cells[6]||'' };
         }
       }
-      // 必须同时有 total 和 home/last6 才算有效战绩表（排除最大值/最小值表格）
-      return (statsObj.total && (statsObj.home || statsObj.last6)) ? statsObj : null;
+      // 有 total 行即算有效战绩表（国际赛可能没有主客场分项）
+      return statsObj.total ? statsObj : null;
     };
 
     var statsTables = [];
     var allTables = document.querySelectorAll('table');
     for (var ti=0; ti<allTables.length; ti++) {
       var ttext = allTables[ti].textContent;
-      // 必须含"总""胜""赛""近6"才是战绩表
-      if (ttext.indexOf('近6')>=0 && ttext.indexOf('胜')>=0 && ttext.indexOf('赛')>=0) {
+      // 含"总"和"胜"即可能是战绩表（国际赛可能没有"近6"）
+      if (ttext.indexOf('总')>=0 && ttext.indexOf('胜')>=0 && /\d{1,3}/.test(ttext)) {
         var parsed = parseStatsTable(allTables[ti]);
         if (parsed) statsTables.push({ data: parsed, idx: ti });
       }
