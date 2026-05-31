@@ -15,6 +15,9 @@
     } else if (url.includes('1x2.titan007.com/oddslist/')) {
       data = extractWinDrawWin();
       type = 'winDrawWin';
+    } else if (url.includes('goalCount.aspx')) {
+      data = extractWinDrawWinStats();
+      type = 'winDrawWinStats';
     } else if (url.includes('AsianOdds_n.aspx')) {
       data = extractAsian();
       type = 'asian';
@@ -27,8 +30,8 @@
     }
 
     if (data && type) {
-      // 提取 matchId
-      const idM = url.match(/[?&/](\d{6,8})/);
+      // 提取 matchId：analysis/oddslist 用路径，vip 页面用 id/sid 参数
+      const idM = url.match(/[?&](?:id|sid)=(\d{6,8})/) || url.match(/\/(\d{6,8})(?=\D|$)/);
       const matchId = idM ? idM[1] : null;
 
       chrome.runtime.sendMessage({
@@ -376,8 +379,28 @@
     const clean = v => String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
     const compact = v => clean(v).replace(/\s+/g, '');
     const fmt = n => Number.isFinite(n) ? Number(n).toFixed(2) : '';
+    const fmtPct = n => Number.isFinite(n) ? (n * 100).toFixed(2) + '%' : '';
     const isSkipName = name => !name || /^(公司|所有|主流|交易所|非交易所|初|即|主|和|客|主胜|客胜|返还率|凯利指数|变化时间|历史指数|筛选|设置自定义)$/.test(name) || /初盘|即时|最高值|最低值|平均值|高级筛选|导出Excel|欧亚转换/.test(name);
     const isOdds = n => n >= 1.01 && n <= 30;
+    const calcReturnRate = (win, draw, loss) => {
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      return win > 0 && draw > 0 && loss > 0 ? win * draw * loss / (win * draw + draw * loss + win * loss) : null;
+    };
+    const calcProbabilities = (win, draw, loss) => {
+      const rate = calcReturnRate(win, draw, loss);
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      if (!rate || !(win > 0 && draw > 0 && loss > 0)) return null;
+      return { win: fmtPct(rate / win), draw: fmtPct(rate / draw), loss: fmtPct(rate / loss), returnRate: fmtPct(rate), _decimal: { win: rate / win, draw: rate / draw, loss: rate / loss } };
+    };
+    const pickChangeTime = rowText => (String(rowText || '').match(/(?:(?:\d{4}[-/])?\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2})/g) || []).pop() || '';
+    const recentChange = timeText => {
+      const m = String(timeText || '').match(/(?:(\d{4})[-/])?(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+      if (!m) return false;
+      const now = new Date();
+      const dt = new Date(m[1] ? parseInt(m[1], 10) : now.getFullYear(), parseInt(m[2], 10) - 1, parseInt(m[3], 10), parseInt(m[4], 10), parseInt(m[5], 10));
+      const diff = now.getTime() - dt.getTime();
+      return diff >= 0 && diff <= 30 * 60 * 1000;
+    };
     const addCompany = entry => {
       if (!entry) return;
       const key = [entry.name, entry.currentWin, entry.currentDraw, entry.currentLoss].join('|');
@@ -385,7 +408,7 @@
       result.companies.push(entry);
       result.allOdds.push(entry);
     };
-    const makeEntry = (name, odds, source) => {
+    const makeEntry = (name, odds, rowText, source) => {
       if (!name || odds.length < 3) return null;
       const entry = { name, source };
       if (odds.length >= 6 && odds.slice(0, 6).every(isOdds)) {
@@ -395,14 +418,11 @@
         entry.initialWin = ''; entry.initialDraw = ''; entry.initialLoss = '';
         entry.currentWin = fmt(odds[0]); entry.currentDraw = fmt(odds[1]); entry.currentLoss = fmt(odds[2]);
       }
+      const time = pickChangeTime(rowText);
+      if (time) entry.changeTime = time;
       return entry;
     };
-
-    document.querySelectorAll('table tr').forEach(row => {
-      const cells = Array.from(row.querySelectorAll('th,td')).map(c => clean(c.textContent));
-      if (cells.length < 4) return;
-      const rowText = cells.join(' ');
-      if (!/\d{1,2}\.\d{2,3}/.test(rowText)) return;
+    const extractName = (row, cells) => {
       let name = '';
       const firstTd = row.querySelector('td');
       if (firstTd) {
@@ -413,13 +433,60 @@
         }
       }
       name = compact(name || cells[0] || '').replace(/^[\d一二三四五六七八九十]+[、.．\-]?/, '').replace(/[×√□☑★*]/g, '').substring(0, 20);
-      if (isSkipName(name)) return;
+      return isSkipName(name) ? '' : name;
+    };
+    const detectRowKind = (cells, rowCompact) => {
+      for (let i = 0; i < Math.min(4, cells.length); i++) {
+        const c = compact(cells[i]);
+        if (/^(初|初盘|初赔|初始)$/.test(c)) return 'initial';
+        if (/^(即|即时|即赔)$/.test(c)) return 'current';
+      }
+      if (/^初盘/.test(rowCompact)) return 'initial';
+      if (/^即时/.test(rowCompact)) return 'current';
+      return '';
+    };
+    const pairedRows = {};
+    let lastCompanyName = '';
+
+    document.querySelectorAll('table tr').forEach(row => {
+      const cells = Array.from(row.querySelectorAll('th,td')).map(c => clean(c.textContent));
+      if (cells.length < 4) return;
+      const rowText = cells.join(' ');
+      if (!/\d{1,2}\.\d{2,3}/.test(rowText)) return;
+      const rowKind = detectRowKind(cells, compact(rowText));
+      let name = extractName(row, cells);
+      if (!name && rowKind && lastCompanyName) name = lastCompanyName;
+      if (!name) return;
+      if (name && !/^(初|即|初盘|即时|初赔|即赔)$/.test(name)) lastCompanyName = name;
       const odds = cells.slice(1).join(' ').match(/\d{1,2}\.\d{2,3}/g)?.map(Number).filter(isOdds) || [];
-      const entry = makeEntry(name, odds, 'content-table');
+      if (rowKind && odds.length >= 3) {
+        const entry = pairedRows[name] || { name, source: 'content-table-paired' };
+        if (rowKind === 'initial') {
+          entry.initialWin = fmt(odds[0]); entry.initialDraw = fmt(odds[1]); entry.initialLoss = fmt(odds[2]);
+        } else {
+          entry.currentWin = fmt(odds[0]); entry.currentDraw = fmt(odds[1]); entry.currentLoss = fmt(odds[2]);
+          const time = pickChangeTime(rowText);
+          if (time) entry.changeTime = time;
+        }
+        pairedRows[name] = entry;
+        result._debug.parsedRows++;
+        return;
+      }
+      const entry = makeEntry(name, odds, rowText, 'content-table');
       if (entry) {
         addCompany(entry);
         result._debug.parsedRows++;
       }
+    });
+
+    Object.keys(pairedRows).forEach(name => {
+      const entry = pairedRows[name];
+      if (!entry.currentWin && entry.initialWin) {
+        entry.currentWin = entry.initialWin;
+        entry.currentDraw = entry.initialDraw;
+        entry.currentLoss = entry.initialLoss;
+      }
+      addCompany(entry);
     });
 
     if (result.companies.length === 0) {
@@ -430,7 +497,7 @@
         const name = compact(line.slice(0, firstNum)).replace(/^[\d一二三四五六七八九十]+[、.．\-]?/, '').replace(/[×√□☑★*]/g, '').substring(0, 20);
         if (isSkipName(name)) return;
         const odds = line.match(/\d{1,2}\.\d{2,3}/g)?.map(Number).filter(isOdds) || [];
-        addCompany(makeEntry(name, odds, 'content-text-fallback'));
+        addCompany(makeEntry(name, odds, line, 'content-text-fallback'));
       });
     }
 
@@ -443,14 +510,124 @@
     result.summary.count = result.companies.length;
     result.summary.averageCurrent = avg(result.companies.map(c => ({ win: c.currentWin, draw: c.currentDraw, loss: c.currentLoss })));
     result.summary.averageInitial = avg(result.companies.map(c => ({ win: c.initialWin, draw: c.initialDraw, loss: c.initialLoss })));
+    let marketProbability = null;
     if (result.summary.averageCurrent) {
-      const aw = parseFloat(result.summary.averageCurrent.win), ad = parseFloat(result.summary.averageCurrent.draw), al = parseFloat(result.summary.averageCurrent.loss);
-      const invW = 1 / aw, invD = 1 / ad, invL = 1 / al, total = invW + invD + invL;
-      result.summary.impliedAverage = { win: (invW / total * 100).toFixed(1) + '%', draw: (invD / total * 100).toFixed(1) + '%', loss: (invL / total * 100).toFixed(1) + '%' };
+      const calc = calcProbabilities(result.summary.averageCurrent.win, result.summary.averageCurrent.draw, result.summary.averageCurrent.loss);
+      if (calc) {
+        marketProbability = calc._decimal;
+        result.summary.impliedAverage = { win: calc.win, draw: calc.draw, loss: calc.loss };
+        result.summary.averageReturnRate = calc.returnRate;
+      }
     }
+    result.companies.forEach(c => {
+      const cp = calcProbabilities(c.currentWin, c.currentDraw, c.currentLoss);
+      if (cp) {
+        c.returnRate = cp.returnRate;
+        c.currentReturnRate = cp.returnRate;
+        c.probabilities = { win: cp.win, draw: cp.draw, loss: cp.loss };
+        c.currentProbabilities = c.probabilities;
+      }
+      const ip = calcProbabilities(c.initialWin, c.initialDraw, c.initialLoss);
+      if (ip) {
+        c.initialReturnRate = ip.returnRate;
+        c.initialProbabilities = { win: ip.win, draw: ip.draw, loss: ip.loss };
+      }
+      if (marketProbability && c.currentWin && c.currentDraw && c.currentLoss) {
+        const kw = marketProbability.win * parseFloat(c.currentWin);
+        const kd = marketProbability.draw * parseFloat(c.currentDraw);
+        const kl = marketProbability.loss * parseFloat(c.currentLoss);
+        c.kelly = { win: fmt(kw), draw: fmt(kd), loss: fmt(kl) };
+        c.kellyRisk = { win: kw > 1, draw: kd > 1, loss: kl > 1 };
+      }
+      if (c.changeTime) c.recent30 = recentChange(c.changeTime);
+    });
     result.keyOdds.allCurrent = result.companies.map(c => ({ name: c.name, win: c.currentWin, draw: c.currentDraw, loss: c.currentLoss }));
     if (result.companies[0]) result.keyOdds.ao = { name: result.companies[0].name, ...result.companies[0] };
     if (result.companies[1]) result.keyOdds.crown = { name: result.companies[1].name, ...result.companies[1] };
+    return result;
+  }
+
+  function extractWinDrawWinStats() {
+    const text = document.body.innerText || '';
+    const result = { company: '36*(英国)', source: 'goalCount', rows: [], summary: {}, recent30: [], _debug: { textLen: text.length, tables: document.querySelectorAll('table').length, parsedRows: 0 } };
+    const clean = v => String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    const compact = v => clean(v).replace(/\s+/g, '');
+    const fmt = n => Number.isFinite(n) ? Number(n).toFixed(2) : '';
+    const fmtPct = n => Number.isFinite(n) ? (n * 100).toFixed(2) + '%' : '';
+    const calcReturnRate = (win, draw, loss) => {
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      return win > 0 && draw > 0 && loss > 0 ? win * draw * loss / (win * draw + draw * loss + win * loss) : null;
+    };
+    const calcProbabilities = (win, draw, loss) => {
+      const rate = calcReturnRate(win, draw, loss);
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      return rate ? { win: fmtPct(rate / win), draw: fmtPct(rate / draw), loss: fmtPct(rate / loss), returnRate: fmtPct(rate) } : null;
+    };
+    const parseType = (cells, rowText) => {
+      const joined = compact(rowText);
+      for (let i = 0; i < Math.min(3, cells.length); i++) {
+        const c = compact(cells[i]);
+        if (/^(初盘|初|初赔|初始)$/.test(c)) return 'initial';
+        if (/^(即时|即|即赔)$/.test(c)) return 'current';
+      }
+      if (/^初盘/.test(joined)) return 'initial';
+      if (/^即时/.test(joined)) return 'current';
+      return '';
+    };
+    const parseStatsRow = (cells, rowText) => {
+      const type = parseType(cells, rowText);
+      if (!type) return null;
+      const oddsItems = [];
+      cells.forEach((c, idx) => (clean(c).match(/\d{1,2}\.\d{2,3}/g) || []).forEach(m => {
+        const v = parseFloat(m);
+        if (v >= 1.01 && v <= 30) oddsItems.push({ value: v, cellIndex: idx });
+      }));
+      if (oddsItems.length < 3) return null;
+      const counts = [];
+      for (let i = oddsItems[2].cellIndex + 1; i < cells.length; i++) {
+        if (/^\d+$/.test(clean(cells[i]))) counts.push(parseInt(clean(cells[i]), 10));
+      }
+      const win = fmt(oddsItems[0].value), draw = fmt(oddsItems[1].value), loss = fmt(oddsItems[2].value);
+      const prob = calcProbabilities(win, draw, loss);
+      return {
+        type,
+        label: type === 'initial' ? '初盘' : '即时',
+        win,
+        draw,
+        loss,
+        total: counts[0] || '',
+        winCount: counts[1] || '',
+        drawCount: counts[2] || '',
+        lossCount: counts[3] || '',
+        probabilities: prob ? { win: prob.win, draw: prob.draw, loss: prob.loss } : null,
+        returnRate: prob ? prob.returnRate : ''
+      };
+    };
+
+    const companyM = clean(document.title + ' ' + text.slice(0, 300)).match(/(\d+\*?\([^)]{1,20}\))\s*欧指统计表/);
+    if (companyM) result.company = companyM[1];
+    document.querySelectorAll('table tr').forEach(row => {
+      const cells = Array.from(row.querySelectorAll('th,td')).map(c => clean(c.textContent));
+      const parsed = parseStatsRow(cells, cells.join(' '));
+      if (parsed) {
+        result.rows.push(parsed);
+        result._debug.parsedRows++;
+      }
+    });
+    if (result.rows.length === 0) {
+      text.split(/\n+/).forEach(line => {
+        line = clean(line);
+        if (!/^(初盘|即时|初|即)\s+\d/.test(line)) return;
+        const parsed = parseStatsRow(line.split(/\s+/), line);
+        if (parsed) result.rows.push(parsed);
+      });
+    }
+    const summaryM = text.match(/共\s*(\d+)\s*场[\s\S]{0,60}?主胜\s*(\d{1,3}(?:\.\d+)?)%[\s\S]{0,30}?(?:和局|平局|和)\s*(\d{1,3}(?:\.\d+)?)%[\s\S]{0,30}?客胜\s*(\d{1,3}(?:\.\d+)?)%/);
+    if (summaryM) result.summary.sampleRates = { total: summaryM[1], win: summaryM[2] + '%', draw: summaryM[3] + '%', loss: summaryM[4] + '%' };
+    const recentM = text.match(/近\s*30\s*场[\s\S]{0,80}?([胜平负和]{10,})/);
+    if (recentM) result.recent30 = recentM[1].replace(/和/g, '平').split('').slice(0, 30);
+    result.summary.initial = result.rows.find(r => r.type === 'initial') || null;
+    result.summary.current = result.rows.find(r => r.type === 'current') || null;
     return result;
   }
 
@@ -496,6 +673,7 @@
       let data = null;
       if (url.includes('/analysis/')) data = extractAnalysis();
       else if (url.includes('1x2.titan007.com/oddslist/')) data = extractWinDrawWin();
+      else if (url.includes('goalCount.aspx')) data = extractWinDrawWinStats();
       else if (url.includes('AsianOdds_n.aspx')) data = extractAsian();
       else if (url.includes('OverDown_n.aspx')) data = extractOverUnder();
       else if (url.includes('Corner.aspx')) data = extractCorner();

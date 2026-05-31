@@ -140,10 +140,10 @@ export class ReportGenerator {
       const sum = winDrawWin.summary || {};
       sections.push(`**欧赔公司数**: ${sum.count || winDrawWin.companies.length} 家`);
       if (sum.averageInitial || sum.averageCurrent) {
-        sections.push(`| 类型 | 主胜 | 平局 | 客胜 |`);
-        sections.push(`|------|------|------|------|`);
-        if (sum.averageInitial) sections.push(`| 初盘平均 | ${sum.averageInitial.win} | ${sum.averageInitial.draw} | ${sum.averageInitial.loss} |`);
-        if (sum.averageCurrent) sections.push(`| 即时平均 | **${sum.averageCurrent.win}** | **${sum.averageCurrent.draw}** | **${sum.averageCurrent.loss}** |`);
+        sections.push(`| 类型 | 主胜 | 平局 | 客胜 | 返还率 |`);
+        sections.push(`|------|------|------|------|--------|`);
+        if (sum.averageInitial) sections.push(`| 初盘平均 | ${sum.averageInitial.win} | ${sum.averageInitial.draw} | ${sum.averageInitial.loss} | - |`);
+        if (sum.averageCurrent) sections.push(`| 即时平均 | **${sum.averageCurrent.win}** | **${sum.averageCurrent.draw}** | **${sum.averageCurrent.loss}** | ${sum.averageReturnRate || '-'} |`);
       }
       if (sum.impliedAverage) {
         sections.push(`**平均隐含概率**: 主胜 ${sum.impliedAverage.win} / 平局 ${sum.impliedAverage.draw} / 客胜 ${sum.impliedAverage.loss}`);
@@ -153,13 +153,38 @@ export class ReportGenerator {
       }
       sections.push('');
 
-      sections.push(`| 公司 | 初主胜 | 初平 | 初客胜 | 即主胜 | 即平 | 即客胜 |`);
-      sections.push(`|------|--------|------|--------|--------|------|--------|`);
+      const stats = winDrawWin.statistics;
+      if (stats?.rows?.length > 0) {
+        sections.push(`### ${stats.company || '36*(英国)'}欧指统计表`);
+        sections.push(`| 类型 | 主胜 | 平局 | 客胜 | 返还率 | 概率(主/平/客) | 样本(总/主/平/客) |`);
+        sections.push(`|------|------|------|------|--------|----------------|------------------|`);
+        stats.rows.forEach(r => {
+          const prob = r.probabilities ? `${r.probabilities.win || '-'} / ${r.probabilities.draw || '-'} / ${r.probabilities.loss || '-'}` : '-';
+          const sample = r.total ? `${r.total}/${r.winCount || 0}/${r.drawCount || 0}/${r.lossCount || 0}` : '-';
+          sections.push(`| ${r.label || r.type} | ${r.win || '-'} | ${r.draw || '-'} | ${r.loss || '-'} | ${r.returnRate || '-'} | ${prob} | ${sample} |`);
+        });
+        if (stats.summary?.sampleRates) {
+          const sr = stats.summary.sampleRates;
+          sections.push(`- 样本赛果分布: 主胜 ${sr.win} / 平局 ${sr.draw} / 客胜 ${sr.loss}${stats.summary.sampleTotal ? `（共${stats.summary.sampleTotal}场）` : ''}`);
+        }
+        if (stats.recent30?.length > 0) sections.push(`- 近30场走势: \`${stats.recent30.join(' ')}\``);
+        sections.push('');
+      }
+
+      const fmtKelly = c => {
+        if (!c.kelly) return '-';
+        const one = (v, risk) => risk ? `**${v}⚠️**` : v;
+        return `${one(c.kelly.win || '-', c.kellyRisk?.win)} / ${one(c.kelly.draw || '-', c.kellyRisk?.draw)} / ${one(c.kelly.loss || '-', c.kellyRisk?.loss)}`;
+      };
+      const fmtProb = c => c.currentProbabilities ? `${c.currentProbabilities.win || '-'} / ${c.currentProbabilities.draw || '-'} / ${c.currentProbabilities.loss || '-'}` : '-';
+      sections.push(`| 公司 | 初主胜 | 初平 | 初客胜 | 即主胜 | 即平 | 即客胜 | 返还率 | 概率(主/平/客) | 凯利(主/平/客) | 变化时间 |`);
+      sections.push(`|------|--------|------|--------|--------|------|--------|--------|----------------|----------------|----------|`);
       winDrawWin.companies.forEach(c => {
         const changed = c.initialWin && (
           c.initialWin !== c.currentWin || c.initialDraw !== c.currentDraw || c.initialLoss !== c.currentLoss
         );
-        sections.push(`| ${c.name} | ${c.initialWin || '-'} | ${c.initialDraw || '-'} | ${c.initialLoss || '-'} | **${c.currentWin || '-'}**${changed ? ' ⚠️' : ''} | **${c.currentDraw || '-'}** | **${c.currentLoss || '-'}** |`);
+        const time = c.changeTime ? `${c.changeTime}${c.recent30 ? ' 🔴近30分钟' : ''}` : '-';
+        sections.push(`| ${c.name} | ${c.initialWin || '-'} | ${c.initialDraw || '-'} | ${c.initialLoss || '-'} | **${c.currentWin || '-'}**${changed ? ' ⚠️' : ''} | **${c.currentDraw || '-'}** | **${c.currentLoss || '-'}** | ${c.currentReturnRate || c.returnRate || '-'} | ${fmtProb(c)} | ${fmtKelly(c)} | ${time} |`);
       });
     } else {
       sections.push('*胜平负盘口数据获取失败*');

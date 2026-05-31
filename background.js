@@ -82,7 +82,13 @@ async function handlePageData(msg, sender) {
   const key = `partial_${matchId}`;
   const stored = await chrome.storage.local.get(key);
   const partial = stored[key] || {};
-  partial[dataType] = data;
+  if (dataType === 'winDrawWinStats') {
+    partial.winDrawWin = mergeWinDrawWinStats(partial.winDrawWin, data);
+  } else if (dataType === 'winDrawWin' && partial.winDrawWin?.statistics) {
+    partial.winDrawWin = mergeWinDrawWinStats(data, partial.winDrawWin.statistics);
+  } else {
+    partial[dataType] = data;
+  }
   partial._updated = Date.now();
 
   await chrome.storage.local.set({ [key]: partial });
@@ -227,14 +233,15 @@ async function handleMessage(msg, sender, sendResponse) {
   }
 }
 
-// ===== 核心：通过标签页注入采集5个数据源 =====
+// ===== 核心：通过标签页注入采集6个数据源 =====
 async function collectViaTabInjection(matchId) {
   const sources = [
-    { type: 'analysis',   url: `https://zq.titan007.com/analysis/${matchId}cn.htm` },
-    { type: 'winDrawWin', url: `https://1x2.titan007.com/oddslist/${matchId}.htm` },
-    { type: 'asian',      url: `https://vip.titan007.com/AsianOdds_n.aspx?id=${matchId}&l=0` },
-    { type: 'overunder',  url: `https://vip.titan007.com/OverDown_n.aspx?id=${matchId}&l=0` },
-    { type: 'corner',     url: `https://vip.titan007.com/Corner.aspx?id=${matchId}&l=0` }
+    { type: 'analysis',        url: `https://zq.titan007.com/analysis/${matchId}cn.htm` },
+    { type: 'winDrawWin',      url: `https://1x2.titan007.com/oddslist/${matchId}.htm` },
+    { type: 'winDrawWinStats', url: `https://vip.titan007.com/count/goalCount.aspx?t=5&sid=${matchId}&cid=281` },
+    { type: 'asian',           url: `https://vip.titan007.com/AsianOdds_n.aspx?id=${matchId}&l=0` },
+    { type: 'overunder',       url: `https://vip.titan007.com/OverDown_n.aspx?id=${matchId}&l=0` },
+    { type: 'corner',          url: `https://vip.titan007.com/Corner.aspx?id=${matchId}&l=0` }
   ];
 
   const results = await Promise.allSettled(sources.map(s => extractOneTab(s.url, s.type)));
@@ -246,8 +253,64 @@ async function collectViaTabInjection(matchId) {
       : { error: results[i].reason?.message || '采集失败' };
   });
 
-  const hasAnyData = sources.some(s => data[s.type] && !data[s.type].error);
+  if (data.winDrawWinStats && !data.winDrawWinStats.error) {
+    data.winDrawWin = mergeWinDrawWinStats(data.winDrawWin, data.winDrawWinStats);
+  }
+  delete data.winDrawWinStats;
+
+  const hasAnyData = ['analysis', 'winDrawWin', 'asian', 'overunder', 'corner']
+    .some(type => data[type] && !data[type].error);
   return hasAnyData ? data : null;
+}
+
+function mergeWinDrawWinStats(winDrawWin, stats) {
+  if (!stats || stats.error) return winDrawWin;
+  const data = winDrawWin && !winDrawWin.error
+    ? winDrawWin
+    : { companies: [], summary: {}, keyOdds: {}, history: [] };
+
+  data.companies = Array.isArray(data.companies) ? data.companies : [];
+  data.summary = data.summary || {};
+  data.keyOdds = data.keyOdds || {};
+  data.statistics = stats;
+
+  const initial = stats.rows?.find(r => r.type === 'initial');
+  const current = stats.rows?.find(r => r.type === 'current');
+  if (initial || current) {
+    const companyName = stats.company || '36*(英国)';
+    const norm = v => String(v || '').replace(/\s+/g, '').toLowerCase();
+    let entry = data.companies.find(c => norm(c.name) === norm(companyName));
+    if (!entry) {
+      entry = { name: companyName, source: 'goal-count-stat' };
+      data.companies.unshift(entry);
+    }
+    if (initial) {
+      entry.initialWin = initial.win;
+      entry.initialDraw = initial.draw;
+      entry.initialLoss = initial.loss;
+      entry.initialReturnRate = initial.returnRate;
+      entry.initialProbabilities = initial.probabilities;
+    }
+    if (current) {
+      entry.currentWin = current.win;
+      entry.currentDraw = current.draw;
+      entry.currentLoss = current.loss;
+      entry.currentReturnRate = current.returnRate;
+      entry.currentProbabilities = current.probabilities;
+    }
+    entry.statSample = {
+      total: current?.total || initial?.total || '',
+      winCount: current?.winCount || initial?.winCount || '',
+      drawCount: current?.drawCount || initial?.drawCount || '',
+      lossCount: current?.lossCount || initial?.lossCount || ''
+    };
+  }
+
+  data.summary.count = data.companies.length;
+  data.keyOdds.allCurrent = data.companies.map(c => ({ name: c.name, win: c.currentWin, draw: c.currentDraw, loss: c.currentLoss }));
+  if (!data.keyOdds.ao && data.companies[0]) data.keyOdds.ao = { name: data.companies[0].name, ...data.companies[0] };
+  if (!data.keyOdds.crown && data.companies[1]) data.keyOdds.crown = { name: data.companies[1].name, ...data.companies[1] };
+  return data;
 }
 
 function extractOneTab(url, dataType) {
@@ -331,6 +394,7 @@ function extractPageData(dataType) {
 
     if (dataType === 'analysis') return extractAnalysis(text, html);
     if (dataType === 'winDrawWin') return extractWinDrawWin(text, html);
+    if (dataType === 'winDrawWinStats') return extractWinDrawWinStats(text, html);
     if (dataType === 'asian')    return extractAsian(text, html);
     if (dataType === 'overunder')return extractOverUnder(text, html);
     if (dataType === 'corner')   return extractCorner(text, html);
@@ -900,6 +964,39 @@ function extractPageData(dataType) {
     const clean = function(v) { return String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim(); };
     const compact = function(v) { return clean(v).replace(/\s+/g, ''); };
     const fmt = function(n) { return isFinite(n) ? Number(n).toFixed(2) : ''; };
+    const fmtPct = function(n) { return isFinite(n) ? (Number(n) * 100).toFixed(2) + '%' : ''; };
+    const calcReturnRate = function(win, draw, loss) {
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      if (!(win > 0 && draw > 0 && loss > 0)) return null;
+      return win * draw * loss / (win * draw + draw * loss + win * loss);
+    };
+    const calcProbabilities = function(win, draw, loss) {
+      const rate = calcReturnRate(win, draw, loss);
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      if (!rate || !(win > 0 && draw > 0 && loss > 0)) return null;
+      return {
+        win: fmtPct(rate / win),
+        draw: fmtPct(rate / draw),
+        loss: fmtPct(rate / loss),
+        returnRate: fmtPct(rate),
+        _decimal: { win: rate / win, draw: rate / draw, loss: rate / loss }
+      };
+    };
+    const recentChange = function(timeText) {
+      var m = String(timeText || '').match(/(?:(\d{4})[-\/])?(\d{1,2})[-\/](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+      if (!m) return false;
+      var now = new Date();
+      var y = m[1] ? parseInt(m[1], 10) : now.getFullYear();
+      var dt = new Date(y, parseInt(m[2], 10) - 1, parseInt(m[3], 10), parseInt(m[4], 10), parseInt(m[5], 10));
+      var diff = now.getTime() - dt.getTime();
+      if (diff < -24 * 60 * 60 * 1000 && !m[1]) dt.setFullYear(y - 1);
+      diff = now.getTime() - dt.getTime();
+      return diff >= 0 && diff <= 30 * 60 * 1000;
+    };
+    const pickChangeTime = function(rowText) {
+      var ms = String(rowText || '').match(/(?:(?:\d{4}[-\/])?\d{1,2}[-\/]\d{1,2}\s+\d{1,2}:\d{2})/g);
+      return ms && ms.length ? ms[ms.length - 1] : '';
+    };
     const isSkipName = function(name) {
       if (!name) return true;
       return /^(公司|所有|主流|交易所|非交易所|初|即|主|和|客|主胜|客胜|返还率|凯利指数|变化时间|历史指数|筛选|设置自定义)$/.test(name) ||
@@ -996,6 +1093,34 @@ function extractPageData(dataType) {
       else if (/即时最低值/.test(label)) target = 'minCurrent';
       if (target) result.summary[target] = { win: fmt(nums[0]), draw: fmt(nums[1]), loss: fmt(nums[2]) };
     };
+    const detectRowKind = function(cells, rowCompact) {
+      for (var i = 0; i < Math.min(4, cells.length); i++) {
+        var c = compact(cells[i]);
+        if (/^(初|初盘|初赔|初始)$/.test(c)) return 'initial';
+        if (/^(即|即时|即赔)$/.test(c)) return 'current';
+      }
+      if (/^初盘/.test(rowCompact) || /初盘/.test(rowCompact.substring(0, 10))) return 'initial';
+      if (/^即时/.test(rowCompact) || /即时/.test(rowCompact.substring(0, 10))) return 'current';
+      return '';
+    };
+    const pairedRows = {};
+    var lastCompanyName = '';
+    const storePairedRow = function(name, kind, nums, rowText) {
+      if (!name || !kind || nums.length < 3) return;
+      var entry = pairedRows[name] || { name: name, source: 'table-paired' };
+      if (kind === 'initial') {
+        entry.initialWin = fmt(nums[0]);
+        entry.initialDraw = fmt(nums[1]);
+        entry.initialLoss = fmt(nums[2]);
+      } else {
+        entry.currentWin = fmt(nums[0]);
+        entry.currentDraw = fmt(nums[1]);
+        entry.currentLoss = fmt(nums[2]);
+        var time = pickChangeTime(rowText);
+        if (time) entry.changeTime = time;
+      }
+      pairedRows[name] = entry;
+    };
 
     document.querySelectorAll('table tr').forEach(function(row) {
       const cells = extractCells(row);
@@ -1007,11 +1132,19 @@ function extractPageData(dataType) {
         return;
       }
       if (!/(\d{1,2}\.\d{2,3})/.test(rowText)) { result._debug.skippedRows++; return; }
-      const name = extractName(row, cells);
+      const rowKind = detectRowKind(cells, rowCompact);
+      var name = extractName(row, cells);
+      if (!name && rowKind && lastCompanyName) name = lastCompanyName;
       if (!name) { result._debug.skippedRows++; return; }
+      if (name && !/^(初|即|初盘|即时|初赔|即赔)$/.test(name)) lastCompanyName = name;
       const nums = parseNumberItems(cells, 1)
         .filter(function(x) { return !x.pct && x.value >= 1.01 && x.value <= 30; })
         .map(function(x) { return x.value; });
+      if (rowKind && nums.length >= 3) {
+        storePairedRow(name, rowKind, nums, rowText);
+        result._debug.parsedRows++;
+        return;
+      }
       const entry = makeEntry(name, nums, rowText, 'table');
       if (entry) {
         addCompany(entry);
@@ -1019,6 +1152,16 @@ function extractPageData(dataType) {
       } else {
         result._debug.skippedRows++;
       }
+    });
+
+    Object.keys(pairedRows).forEach(function(name) {
+      var entry = pairedRows[name];
+      if (!entry.currentWin && entry.initialWin) {
+        entry.currentWin = entry.initialWin;
+        entry.currentDraw = entry.initialDraw;
+        entry.currentLoss = entry.initialLoss;
+      }
+      addCompany(entry);
     });
 
     if (result.companies.length === 0) {
@@ -1062,20 +1205,47 @@ function extractPageData(dataType) {
     result.summary.count = result.companies.length;
     result.summary.movement = movement;
 
+    var marketProbability = null;
     if (result.summary.averageCurrent) {
       var aw = parseFloat(result.summary.averageCurrent.win);
       var ad = parseFloat(result.summary.averageCurrent.draw);
       var al = parseFloat(result.summary.averageCurrent.loss);
       if (aw > 0 && ad > 0 && al > 0) {
-        var invW = 1 / aw, invD = 1 / ad, invL = 1 / al;
-        var total = invW + invD + invL;
-        result.summary.impliedAverage = {
-          win: (invW / total * 100).toFixed(1) + '%',
-          draw: (invD / total * 100).toFixed(1) + '%',
-          loss: (invL / total * 100).toFixed(1) + '%'
-        };
+        var marketCalc = calcProbabilities(aw, ad, al);
+        if (marketCalc) {
+          marketProbability = marketCalc._decimal;
+          result.summary.impliedAverage = {
+            win: marketCalc.win,
+            draw: marketCalc.draw,
+            loss: marketCalc.loss
+          };
+          result.summary.averageReturnRate = marketCalc.returnRate;
+        }
       }
     }
+
+    result.companies.forEach(function(c) {
+      var cp = calcProbabilities(c.currentWin, c.currentDraw, c.currentLoss);
+      if (cp) {
+        c.returnRate = cp.returnRate;
+        c.currentReturnRate = cp.returnRate;
+        c.probabilities = { win: cp.win, draw: cp.draw, loss: cp.loss };
+        c.currentProbabilities = c.probabilities;
+      }
+      var ip = calcProbabilities(c.initialWin, c.initialDraw, c.initialLoss);
+      if (ip) {
+        c.initialReturnRate = ip.returnRate;
+        c.initialProbabilities = { win: ip.win, draw: ip.draw, loss: ip.loss };
+      }
+      if (marketProbability && c.currentWin && c.currentDraw && c.currentLoss) {
+        var kw = marketProbability.win * parseFloat(c.currentWin);
+        var kd = marketProbability.draw * parseFloat(c.currentDraw);
+        var kl = marketProbability.loss * parseFloat(c.currentLoss);
+        c.kelly = { win: fmt(kw), draw: fmt(kd), loss: fmt(kl) };
+        c.kellyRisk = { win: kw > 1, draw: kd > 1, loss: kl > 1 };
+      }
+      if (c.changeTime) c.recent30 = recentChange(c.changeTime);
+    });
 
     result.keyOdds.allCurrent = result.companies.map(function(c) {
       return { name: c.name, win: c.currentWin, draw: c.currentDraw, loss: c.currentLoss };
@@ -1084,6 +1254,126 @@ function extractPageData(dataType) {
     if (result.companies[1]) result.keyOdds.crown = { name: result.companies[1].name, ...result.companies[1] };
     result.history = extractHistory(text, 'winDrawWin');
 
+    return result;
+  }
+
+  // ===================== 36*(英国)欧指统计表 =====================
+  function extractWinDrawWinStats(text, html) {
+    const result = {
+      company: '36*(英国)',
+      source: 'goalCount',
+      rows: [],
+      summary: {},
+      recent30: [],
+      _debug: { title: document.title, textLen: text.length, tables: document.querySelectorAll('table').length, parsedRows: 0 }
+    };
+    const clean = function(v) { return String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim(); };
+    const compact = function(v) { return clean(v).replace(/\s+/g, ''); };
+    const fmt = function(n) { return isFinite(n) ? Number(n).toFixed(2) : ''; };
+    const fmtPct = function(n) { return isFinite(n) ? (Number(n) * 100).toFixed(2) + '%' : ''; };
+    const calcReturnRate = function(win, draw, loss) {
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      if (!(win > 0 && draw > 0 && loss > 0)) return null;
+      return win * draw * loss / (win * draw + draw * loss + win * loss);
+    };
+    const calcProbabilities = function(win, draw, loss) {
+      const rate = calcReturnRate(win, draw, loss);
+      win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
+      if (!rate || !(win > 0 && draw > 0 && loss > 0)) return null;
+      return { win: fmtPct(rate / win), draw: fmtPct(rate / draw), loss: fmtPct(rate / loss), returnRate: fmtPct(rate) };
+    };
+    const parseRowType = function(cells, rowText) {
+      var joined = compact(rowText);
+      for (var i = 0; i < Math.min(3, cells.length); i++) {
+        var c = compact(cells[i]);
+        if (/^(初盘|初|初赔|初始)$/.test(c)) return 'initial';
+        if (/^(即时|即|即赔)$/.test(c)) return 'current';
+      }
+      if (/^初盘/.test(joined)) return 'initial';
+      if (/^即时/.test(joined)) return 'current';
+      return '';
+    };
+    const parseStatsRow = function(cells, rowText) {
+      const type = parseRowType(cells, rowText);
+      if (!type) return null;
+      const oddsItems = [];
+      cells.forEach(function(c, idx) {
+        var ms = clean(c).match(/\d{1,2}\.\d{2,3}/g) || [];
+        ms.forEach(function(m) {
+          var v = parseFloat(m);
+          if (v >= 1.01 && v <= 30) oddsItems.push({ value: v, cellIndex: idx });
+        });
+      });
+      if (oddsItems.length < 3) return null;
+      const lastOddsIndex = oddsItems[2].cellIndex;
+      const counts = [];
+      for (var i = lastOddsIndex + 1; i < cells.length; i++) {
+        var cm = clean(cells[i]).match(/^\d+$/);
+        if (cm) counts.push(parseInt(cm[0], 10));
+      }
+      const win = fmt(oddsItems[0].value);
+      const draw = fmt(oddsItems[1].value);
+      const loss = fmt(oddsItems[2].value);
+      const prob = calcProbabilities(win, draw, loss);
+      const row = {
+        type,
+        label: type === 'initial' ? '初盘' : '即时',
+        win,
+        draw,
+        loss,
+        total: counts[0] || '',
+        winCount: counts[1] || '',
+        drawCount: counts[2] || '',
+        lossCount: counts[3] || '',
+        probabilities: prob ? { win: prob.win, draw: prob.draw, loss: prob.loss } : null,
+        returnRate: prob ? prob.returnRate : ''
+      };
+      if (row.total) {
+        row.sampleProbabilities = {
+          win: row.winCount !== '' ? (row.winCount / row.total * 100).toFixed(2) + '%' : '',
+          draw: row.drawCount !== '' ? (row.drawCount / row.total * 100).toFixed(2) + '%' : '',
+          loss: row.lossCount !== '' ? (row.lossCount / row.total * 100).toFixed(2) + '%' : ''
+        };
+      }
+      return row;
+    };
+
+    var titleText = clean(document.title + ' ' + text.slice(0, 300));
+    var companyM = titleText.match(/(\d+\*?\([^)]{1,20}\))\s*欧指统计表/);
+    if (companyM) result.company = companyM[1];
+
+    document.querySelectorAll('table tr').forEach(function(row) {
+      const cells = Array.from(row.querySelectorAll('th,td')).map(function(c) { return clean(c.textContent); });
+      if (cells.length < 4) return;
+      const rowText = cells.join(' ');
+      const parsed = parseStatsRow(cells, rowText);
+      if (parsed) {
+        result.rows.push(parsed);
+        result._debug.parsedRows++;
+      }
+    });
+
+    if (result.rows.length === 0) {
+      var lines = text.split(/\n+/);
+      lines.forEach(function(line) {
+        line = clean(line);
+        if (!/^(初盘|即时|初|即)\s+\d/.test(line)) return;
+        var cells = line.split(/\s+/);
+        var parsed = parseStatsRow(cells, line);
+        if (parsed) result.rows.push(parsed);
+      });
+    }
+
+    var summaryM = text.match(/共\s*(\d+)\s*场[\s\S]{0,60}?主胜\s*(\d{1,3}(?:\.\d+)?)%[\s\S]{0,30}?(?:和局|平局|和)\s*(\d{1,3}(?:\.\d+)?)%[\s\S]{0,30}?客胜\s*(\d{1,3}(?:\.\d+)?)%/);
+    if (summaryM) {
+      result.summary.sampleTotal = summaryM[1];
+      result.summary.sampleRates = { win: summaryM[2] + '%', draw: summaryM[3] + '%', loss: summaryM[4] + '%' };
+    }
+    var recentM = text.match(/近\s*30\s*场[\s\S]{0,80}?([胜平负和客主]{10,})/);
+    if (recentM) result.recent30 = recentM[1].replace(/和/g, '平').split('').slice(0, 30);
+
+    result.summary.initial = result.rows.find(function(r) { return r.type === 'initial'; }) || null;
+    result.summary.current = result.rows.find(function(r) { return r.type === 'current'; }) || null;
     return result;
   }
 

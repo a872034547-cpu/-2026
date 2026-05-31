@@ -45,6 +45,7 @@
       "matches": [
         "https://zq.titan007.com/analysis/*",
         "https://1x2.titan007.com/oddslist/*",
+        "https://vip.titan007.com/count/goalCount.aspx*",
         "https://vip.titan007.com/AsianOdds_n.aspx*",
         "https://vip.titan007.com/OverDown_n.aspx*",
         "https://vip.titan007.com/Corner.aspx*"

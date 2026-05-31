@@ -429,32 +429,48 @@ async function renderDataPanel(data) {
 if (winDrawWin && !winDrawWin.error) {
   const sum = winDrawWin.summary || {};
   const companies = winDrawWin.companies || [];
+  const stats = winDrawWin.statistics;
+  const kellyCell = (v, risk) => risk ? `<span style="color:#f85149;font-weight:700">${v || '-'}⚠️</span>` : `${v || '-'}`;
   html += `<div class="data-section">
     <div class="section-header">
       🏆 胜平负盘口（欧赔）
-      <span style="color:#a371f7;font-size:11px">公司:${sum.count || companies.length}${sum.impliedAverage ? ' | 概率 '+sum.impliedAverage.win+'/'+sum.impliedAverage.draw+'/'+sum.impliedAverage.loss : ''}</span>
+      <span style="color:#a371f7;font-size:11px">公司:${sum.count || companies.length}${sum.impliedAverage ? ' | 概率 '+sum.impliedAverage.win+'/'+sum.impliedAverage.draw+'/'+sum.impliedAverage.loss : ''}${sum.averageReturnRate ? ' | 返还 '+sum.averageReturnRate : ''}</span>
     </div>
     <div class="section-body">`;
 
   if (sum.averageCurrent || sum.averageInitial) {
     html += `<table class="odds-table">
-      <tr><th>类型</th><th>主胜</th><th>平局</th><th>客胜</th></tr>
-      ${sum.averageInitial ? `<tr><td class="company">初盘平均</td><td>${sum.averageInitial.win}</td><td>${sum.averageInitial.draw}</td><td>${sum.averageInitial.loss}</td></tr>` : ''}
-      ${sum.averageCurrent ? `<tr><td class="company">即时平均</td><td class="handicap">${sum.averageCurrent.win}</td><td class="handicap">${sum.averageCurrent.draw}</td><td class="handicap">${sum.averageCurrent.loss}</td></tr>` : ''}
+      <tr><th>类型</th><th>主胜</th><th>平局</th><th>客胜</th><th>返还率</th></tr>
+      ${sum.averageInitial ? `<tr><td class="company">初盘平均</td><td>${sum.averageInitial.win}</td><td>${sum.averageInitial.draw}</td><td>${sum.averageInitial.loss}</td><td>-</td></tr>` : ''}
+      ${sum.averageCurrent ? `<tr><td class="company">即时平均</td><td class="handicap">${sum.averageCurrent.win}</td><td class="handicap">${sum.averageCurrent.draw}</td><td class="handicap">${sum.averageCurrent.loss}</td><td>${sum.averageReturnRate || '-'}</td></tr>` : ''}
     </table>`;
+  }
+
+  if (stats?.rows?.length > 0) {
+    html += `<div style="margin-top:8px;color:#8b949e;font-size:11px;margin-bottom:4px">${stats.company || '36*(英国)'}欧指统计表</div>
+    <table class="odds-table"><tr><th>类型</th><th>主</th><th>平</th><th>客</th><th>返还</th><th>样本</th></tr>`;
+    stats.rows.forEach(r => {
+      const sample = r.total ? `${r.total}/${r.winCount || 0}/${r.drawCount || 0}/${r.lossCount || 0}` : '-';
+      html += `<tr><td class="company">${r.label || r.type}</td><td>${r.win || '-'}</td><td>${r.draw || '-'}</td><td>${r.loss || '-'}</td><td>${r.returnRate || '-'}</td><td>${sample}</td></tr>`;
+    });
+    html += `</table>`;
+    if (stats.recent30?.length > 0) html += `<div style="margin-top:6px;color:#8b949e;font-size:11px">近30场: <span style="color:#f85149">${stats.recent30.join(' ')}</span></div>`;
   }
 
   const top3wdw = companies.slice(0, 3);
   if (top3wdw.length > 0) {
     html += `<div style="margin-top:8px;color:#8b949e;font-size:11px;margin-bottom:4px">主要公司胜平负</div>
     <table class="odds-table">
-      <tr><th>公司</th><th>初主</th><th>初平</th><th>初客</th><th>即主</th><th>即平</th><th>即客</th></tr>`;
+      <tr><th>公司</th><th>初主</th><th>初平</th><th>初客</th><th>即主</th><th>即平</th><th>即客</th><th>返还</th><th>凯利</th><th>时间</th></tr>`;
     top3wdw.forEach(c => {
       const changed = c.initialWin && (c.initialWin !== c.currentWin || c.initialDraw !== c.currentDraw || c.initialLoss !== c.currentLoss);
+      const kelly = c.kelly ? `${kellyCell(c.kelly.win, c.kellyRisk?.win)}/${kellyCell(c.kelly.draw, c.kellyRisk?.draw)}/${kellyCell(c.kelly.loss, c.kellyRisk?.loss)}` : '-';
+      const timeStyle = c.recent30 ? 'color:#f85149;font-weight:700' : '';
       html += `<tr>
         <td class="company">${c.name}</td>
         <td>${c.initialWin || '-'}</td><td>${c.initialDraw || '-'}</td><td>${c.initialLoss || '-'}</td>
         <td class="handicap${changed?' changed':''}">${c.currentWin || '-'}${changed?'⚠️':''}</td><td>${c.currentDraw || '-'}</td><td>${c.currentLoss || '-'}</td>
+        <td>${c.currentReturnRate || c.returnRate || '-'}</td><td>${kelly}</td><td style="${timeStyle}">${c.changeTime || '-'}</td>
       </tr>`;
     });
     html += `</table>`;
@@ -462,9 +478,10 @@ if (winDrawWin && !winDrawWin.error) {
 
   if (companies.length > 3) {
     html += `<div style="margin-top:8px;color:#8b949e;font-size:11px;margin-bottom:4px">所有公司即时胜平负（${companies.length}家）</div>
-    <table class="odds-table"><tr><th>公司</th><th>主胜</th><th>平局</th><th>客胜</th></tr>`;
+    <table class="odds-table"><tr><th>公司</th><th>主胜</th><th>平局</th><th>客胜</th><th>返还</th><th>概率</th></tr>`;
     companies.forEach(c => {
-      html += `<tr><td class="company" style="font-size:10px">${c.name}</td><td>${c.currentWin || '-'}</td><td>${c.currentDraw || '-'}</td><td>${c.currentLoss || '-'}</td></tr>`;
+      const prob = c.currentProbabilities ? `${c.currentProbabilities.win}/${c.currentProbabilities.draw}/${c.currentProbabilities.loss}` : '-';
+      html += `<tr><td class="company" style="font-size:10px">${c.name}</td><td>${c.currentWin || '-'}</td><td>${c.currentDraw || '-'}</td><td>${c.currentLoss || '-'}</td><td>${c.currentReturnRate || c.returnRate || '-'}</td><td>${prob}</td></tr>`;
     });
     html += `</table>`;
   }
