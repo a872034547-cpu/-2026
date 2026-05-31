@@ -1,5 +1,8 @@
 // popup.js - 弹窗逻辑控制
 
+const PLUGIN_PASSWORD = '2026';
+const PLUGIN_UNLOCK_KEY = 'pluginUnlocked_v1';
+let appInitialized = false;
 let currentMatchId = null;
 let currentReport = null;
 let currentData = null;
@@ -27,7 +30,51 @@ function playAlert(type = 'high') {
 }
 
 // ===== 初始化 =====
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', initUnlockGate);
+
+async function initUnlockGate() {
+  const input = document.getElementById('pluginPasswordInput');
+  const btn = document.getElementById('pluginUnlockBtn');
+  const saved = await chrome.storage.local.get(PLUGIN_UNLOCK_KEY);
+
+  btn?.addEventListener('click', unlockPlugin);
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') unlockPlugin();
+  });
+
+  if (saved[PLUGIN_UNLOCK_KEY] === true) {
+    await showAppAndInit();
+  } else {
+    document.getElementById('unlockScreen').style.display = 'flex';
+    document.getElementById('appShell').style.display = 'none';
+    setTimeout(() => input?.focus(), 50);
+  }
+}
+
+async function unlockPlugin() {
+  const input = document.getElementById('pluginPasswordInput');
+  const err = document.getElementById('pluginUnlockError');
+  const password = (input?.value || '').trim();
+  if (password !== PLUGIN_PASSWORD) {
+    err.textContent = '密码不正确，请关注公众号发送“足球”获取插件密码。';
+    input?.focus();
+    input?.select();
+    return;
+  }
+  err.textContent = '';
+  await chrome.storage.local.set({ [PLUGIN_UNLOCK_KEY]: true });
+  await showAppAndInit();
+}
+
+async function showAppAndInit() {
+  document.getElementById('unlockScreen').style.display = 'none';
+  document.getElementById('appShell').style.display = 'block';
+  if (appInitialized) return;
+  appInitialized = true;
+  await initializeApp();
+}
+
+async function initializeApp() {
   initTabs();
   initButtons();
   await loadMonitorList();
@@ -39,7 +86,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentMatchId = saved.lastMatchId;
     await loadDataForMatch(currentMatchId);
   }
-});
+}
 
 // ===== Tab 切换 =====
 function initTabs() {

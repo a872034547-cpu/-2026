@@ -492,9 +492,112 @@
     font-size: 12px;
     flex: 0 0 auto;
   }
+
+  .unlock-screen {
+    min-height: 100vh;
+    padding: 18px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(circle at top, #1f6feb26 0, transparent 34%),
+      linear-gradient(180deg, #0d1117 0%, #05070a 100%);
+  }
+  .unlock-card {
+    width: 100%;
+    max-width: 430px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 18px 48px rgba(0,0,0,.36);
+    text-align: center;
+  }
+  .unlock-logo {
+    font-size: 34px;
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .unlock-title {
+    color: #58a6ff;
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .unlock-tip {
+    color: #c9d1d9;
+    font-size: 13px;
+    line-height: 1.7;
+    margin-bottom: 12px;
+  }
+  .unlock-tip strong { color: #f0883e; }
+  .qrcode-wrap {
+    display: inline-flex;
+    padding: 10px;
+    background: #fff;
+    border-radius: 12px;
+    margin: 4px 0 12px;
+  }
+  .qrcode-wrap img {
+    width: 170px;
+    height: 170px;
+    object-fit: contain;
+    display: block;
+  }
+  .unlock-form {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .unlock-form input {
+    flex: 1;
+    min-width: 0;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    color: #e6edf3;
+    padding: 9px 10px;
+    font-size: 13px;
+    outline: none;
+  }
+  .unlock-form input:focus { border-color: #58a6ff; }
+  .unlock-error {
+    min-height: 18px;
+    margin-top: 8px;
+    color: #ffa198;
+    font-size: 12px;
+  }
+  .unlock-note {
+    color: #8b949e;
+    font-size: 11px;
+    line-height: 1.6;
+    margin-top: 8px;
+  }
 </style>
 </head>
 <body>
+
+<div class="unlock-screen" id="unlockScreen">
+  <div class="unlock-card">
+    <div class="unlock-logo">⚽</div>
+    <div class="unlock-title">足球预测助手使用验证</div>
+    <div class="unlock-tip">
+      请关注公众号 <strong>Ai应用研究社团</strong><br>
+      发送 <strong>足球</strong> 免费获取插件密码
+    </div>
+    <div class="qrcode-wrap">
+      <img src="gzh.jpg" alt="Ai应用研究社团公众号二维码">
+    </div>
+    <div class="unlock-form">
+      <input type="password" id="pluginPasswordInput" placeholder="请输入插件密码" autocomplete="off">
+      <button class="btn btn-blue" id="pluginUnlockBtn">解锁</button>
+    </div>
+    <div class="unlock-error" id="pluginUnlockError"></div>
+    <div class="unlock-note">验证通过后会保存在本机浏览器，下次打开无需重复输入。</div>
+  </div>
+</div>
+
+<div id="appShell" style="display:none">
 
 <div class="header">
   <div class="header-title">
@@ -653,6 +756,8 @@
       <button class="btn btn-sm" id="debugBtn" style="background:#21262d;border:1px solid #484f58;color:#484f58;width:100%">🔍 调试：查看原始数据结构</button>
     </div>
   </div>
+
+</div>
 
 </div>
 
