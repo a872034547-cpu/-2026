@@ -1030,8 +1030,11 @@ function renderDailyList() {
     return;
   }
 
-  // 按盈利性评分+联赛优先级排序
+  // 排序：已勾选+已采集 > 已采集未勾选 > 其余；同组内按联赛优先级+价值评分
   items = [...items].sort((a, b) => {
+    const rankA = (a.checked ? 2 : 0) + (a.matchData ? 1 : 0);
+    const rankB = (b.checked ? 2 : 0) + (b.matchData ? 1 : 0);
+    if (rankB !== rankA) return rankB - rankA;
     const pa = (b.match.leaguePriority || 0) * 10 + (b.profitability?.score || 0);
     const pb = (a.match.leaguePriority || 0) * 10 + (a.profitability?.score || 0);
     return pa - pb;
@@ -1053,6 +1056,7 @@ function renderDailyList() {
         <div class="daily-main">
           <input type="checkbox" class="daily-check" data-id="${m.id}" ${checked} style="accent-color:#58a6ff;cursor:pointer;flex-shrink:0">
           <span class="pill-text" style="color:${tierColor};font-size:10px;background:${tierColor}22;padding:1px 5px;border-radius:3px">${escapeHtml(m.leagueTier)}</span>
+          <span class="pill-text" style="color:#484f58;font-size:9px;font-family:monospace;letter-spacing:0.3px">ID:${escapeHtml(m.id)}</span>
           <span class="clip-text" style="font-size:11px;color:#8b949e;max-width:76px" title="${escapeHtml(m.league)}">${escapeHtml(m.league)}</span>
           <span class="clip-text" style="font-weight:600;font-size:12px;color:#e6edf3;flex:1 1 160px" title="${escapeHtml(m.home)} vs ${escapeHtml(m.away)}">${escapeHtml(m.home)} vs ${escapeHtml(m.away)}</span>
           ${m.time ? `<span class="pill-text" style="color:#484f58;font-size:10px">${escapeHtml(m.time)}</span>` : ''}
