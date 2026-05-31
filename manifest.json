@@ -5,6 +5,7 @@
   "description": "实时监控球探网盘口数据，自动生成AI分析报告，提供赛前及实时预测",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "alarms",
     "notifications",
     "clipboardWrite",

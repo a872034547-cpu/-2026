@@ -342,32 +342,96 @@
   // ===== 大小球提取 =====
   function extractOverUnder() {
     const result = { companies: [], summary: {}, keyOdds: {}, allOdds: [] };
-    const text = document.body.innerText;
+    const text = document.body.innerText || '';
+    const clean = v => String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    const compact = v => clean(v).replace(/\s+/g, '');
 
     result.summary.up   = (text.match(/升盘[_\s]*(\d+)/) || [,'0'])[1];
     result.summary.down = (text.match(/降盘[_\s]*(\d+)/) || [,'0'])[1];
 
-    // 进球线
-    const lineRe = /([01]\.\d{2})\s+((?:\d+(?:\/\d+)?(?:\.\d+)?))\s+([01]\.\d{2})/g;
-    const allOdds = [];
-    let m;
-    while ((m = lineRe.exec(text)) !== null) {
-      const line = parseFloat(m[2]);
-      if (line >= 1.5 && line <= 5.5) {
-        allOdds.push({ over: m[1], line: m[2], under: m[3] });
+    const WATER_RE = /^[01]\.\d{2}$/;
+    const LINE_RE = /^\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?$/;
+    const SUB_RE = /^盘[2-9]$/;
+    const isLine = v => LINE_RE.test(clean(v)) && parseFloat(v) >= 1.5 && parseFloat(v) <= 5.5;
+    const normalizeCompanyName = raw => compact(raw).replace(/[*★]/g, '').replace(/(走势|详情|主流|多盘)$/g, '').substring(0, 15);
+    const isValidName = name => {
+      name = normalizeCompanyName(name);
+      return !!name && name.length <= 15 && !/^(公司|初|即时|大球|小球|进球数|盘口|多盘|升盘|降盘)$/.test(name) && /[\u4e00-\u9fa5A-Za-z]/.test(name);
+    };
+    const extractName = row => {
+      const td = row.querySelector('td');
+      if (!td) return '';
+      let raw = '';
+      td.childNodes.forEach(node => { if (!raw && node.nodeType === 3) raw = clean(node.textContent); });
+      if (!raw) {
+        const a = td.querySelector('a');
+        raw = a ? clean(a.textContent) : clean(td.textContent);
+      }
+      return normalizeCompanyName(raw);
+    };
+    const makeLine = (waters, lines) => {
+      if (waters.length < 4 || lines.length < 1) return null;
+      return {
+        initialOver: waters[0], initialLine: lines[0], initialUnder: waters[1],
+        currentOver: waters[2], currentLine: lines[lines.length > 1 ? 1 : 0], currentUnder: waters[3]
+      };
+    };
+
+    let currentCompany = null;
+    let lastCompanyName = '';
+    document.querySelectorAll('table tr').forEach(row => {
+      const cells = Array.from(row.querySelectorAll('td')).map(c => clean(c.textContent));
+      if (!cells.length) return;
+      const waters = cells.filter(c => WATER_RE.test(c));
+      const lines = cells.filter(isLine);
+      const line = makeLine(waters, lines);
+      if (!line) return;
+
+      const subLabel = SUB_RE.test(compact(cells[0])) ? compact(cells[0]) : (SUB_RE.test(compact(cells[1])) ? compact(cells[1]) : '');
+      if (subLabel && currentCompany) {
+        currentCompany.subLines = currentCompany.subLines || [];
+        currentCompany.subLines.push({ label: subLabel, ...line });
+        return;
+      }
+
+      let name = extractName(row);
+      if (!isValidName(name) && lastCompanyName) name = lastCompanyName;
+      if (!isValidName(name)) return;
+      lastCompanyName = name;
+      currentCompany = { name, mainLine: line, subLines: [] };
+      result.companies.push(currentCompany);
+      result.allOdds.push(line);
+    });
+
+    if (result.companies.length === 0) {
+      const lineRe = /([01]\.\d{2})\s+((?:\d+(?:\/\d+)?(?:\.\d+)?))\s+([01]\.\d{2})/g;
+      const allOdds = [];
+      let m;
+      while ((m = lineRe.exec(text)) !== null) {
+        const line = parseFloat(m[2]);
+        if (line >= 1.5 && line <= 5.5) allOdds.push({ over: m[1], line: m[2], under: m[3] });
+      }
+      for (let i = 0; i < allOdds.length - 1; i += 2) {
+        const line = {
+          initialOver: allOdds[i].over, initialLine: allOdds[i].line, initialUnder: allOdds[i].under,
+          currentOver: allOdds[i+1].over, currentLine: allOdds[i+1].line, currentUnder: allOdds[i+1].under
+        };
+        result.companies.push({ name: `C${Math.floor(i / 2) + 1}`, mainLine: line, subLines: [] });
+        result.allOdds.push(line);
       }
     }
 
-    // 配对初盘/即时
-    for (let i = 0; i < allOdds.length - 1; i += 2) {
-      result.allOdds.push({
-        initialOver: allOdds[i].over, initialLine: allOdds[i].line, initialUnder: allOdds[i].under,
-        currentOver: allOdds[i+1].over, currentLine: allOdds[i+1].line, currentUnder: allOdds[i+1].under
-      });
-    }
+    if (result.companies[0]) result.keyOdds.ao    = { name: result.companies[0].name, ...result.companies[0].mainLine };
+    if (result.companies[1]) result.keyOdds.crown = { name: result.companies[1].name, ...result.companies[1].mainLine };
+    result.keyOdds.allCurrent = result.companies.map(c => ({ name: c.name, over: c.mainLine.currentOver, line: c.mainLine.currentLine, under: c.mainLine.currentUnder }));
 
-    if (result.allOdds[0]) result.keyOdds.ao    = { name: '澳门', ...result.allOdds[0] };
-    if (result.allOdds[1]) result.keyOdds.crown = { name: '皇冠', ...result.allOdds[1] };
+    const lineCounts = {};
+    result.companies.forEach(c => {
+      const line = c.mainLine && c.mainLine.currentLine;
+      if (line) lineCounts[line] = (lineCounts[line] || 0) + 1;
+    });
+    result.summary.mainLine = Object.entries(lineCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    result.summary.lineConsensus = lineCounts;
 
     return result;
   }
@@ -380,17 +444,43 @@
     const compact = v => clean(v).replace(/\s+/g, '');
     const fmt = n => Number.isFinite(n) ? Number(n).toFixed(2) : '';
     const fmtPct = n => Number.isFinite(n) ? (n * 100).toFixed(2) + '%' : '';
-    const isSkipName = name => !name || /^(公司|所有|主流|交易所|非交易所|初|即|主|和|客|主胜|客胜|返还率|凯利指数|变化时间|历史指数|筛选|设置自定义)$/.test(name) || /初盘|即时|最高值|最低值|平均值|高级筛选|导出Excel|欧亚转换/.test(name);
-    const isOdds = n => n >= 1.01 && n <= 30;
+    const isSkipName = name => {
+      name = compact(name);
+      return !name || /^(公司|所有|主流|交易所|非交易所|初|即|主|和|客|主胜|客胜|返还率|凯利指数|变化时间|历史指数|筛选|设置自定义)$/.test(name) || /初盘|即时|最高值|最低值|平均值|高级筛选|删除选中|保留选中|导出Excel|欧亚转换|主胜率|和率|平率|客胜率|概率|返还|凯利|变化时间/.test(name);
+    };
+    const isOdds = n => { n = parseFloat(n); return Number.isFinite(n) && n >= 1.01 && n <= 30; };
     const calcReturnRate = (win, draw, loss) => {
       win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
       return win > 0 && draw > 0 && loss > 0 ? win * draw * loss / (win * draw + draw * loss + win * loss) : null;
+    };
+    const isValidTriple = (win, draw, loss) => {
+      if (!isOdds(win) || !isOdds(draw) || !isOdds(loss)) return false;
+      const rate = calcReturnRate(win, draw, loss);
+      return !!rate && rate >= 0.70 && rate <= 1.05;
     };
     const calcProbabilities = (win, draw, loss) => {
       const rate = calcReturnRate(win, draw, loss);
       win = parseFloat(win); draw = parseFloat(draw); loss = parseFloat(loss);
       if (!rate || !(win > 0 && draw > 0 && loss > 0)) return null;
       return { win: fmtPct(rate / win), draw: fmtPct(rate / draw), loss: fmtPct(rate / loss), returnRate: fmtPct(rate), _decimal: { win: rate / win, draw: rate / draw, loss: rate / loss } };
+    };
+    const normalizeCompanyName = raw => {
+      let name = compact(raw).replace(/[×√□☑★]/g, '');
+      name = name.replace(/^[\s\-:：]+/, '');
+      if (!/^\d+\*?[（(][^）)]{1,20}[）)]$/.test(name)) {
+        name = name.replace(/^[\d一二三四五六七八九十]+[、.．\-]\s*/, '');
+      }
+      name = name.replace(/\[[^\]]*\]/g, '').replace(/[【】]/g, '').replace(/(走势|详情|历史|主流|交易所|非交易所)$/g, '').trim();
+      return name.length > 24 ? name.substring(0, 24) : name;
+    };
+    const isValidCompanyName = name => {
+      name = normalizeCompanyName(name);
+      if (!name || name.length > 24) return false;
+      if (/^\d+(?:\.\d+)?%?$/.test(name)) return false;
+      if (/^[（(][^）)]*[）)]$/.test(name)) return false;
+      if (/^[\d\s]+$/.test(name)) return false;
+      if (isSkipName(name)) return false;
+      return /[\u4e00-\u9fa5A-Za-z]/.test(name) || /^\d+\*?[（(][^）)]{1,20}[）)]$/.test(name);
     };
     const pickChangeTime = rowText => (String(rowText || '').match(/(?:(?:\d{4}[-/])?\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2})/g) || []).pop() || '';
     const recentChange = timeText => {
@@ -401,23 +491,52 @@
       const diff = now.getTime() - dt.getTime();
       return diff >= 0 && diff <= 30 * 60 * 1000;
     };
+    const parseOddsFromCells = (cells, start = 1) => {
+      const odds = [];
+      for (let i = start; i < cells.length; i++) {
+        const cell = clean(cells[i]);
+        if (!cell || cell.includes('%') || /凯利|概率|主胜率|和率|平率|客胜率|返还/.test(cell)) continue;
+        const re = /(^|[^\d.])(\d{1,2}\.\d{2,3})(?![\d.])/g;
+        let m;
+        while ((m = re.exec(cell)) !== null) {
+          const v = parseFloat(m[2]);
+          if (isOdds(v)) odds.push(v);
+        }
+      }
+      return odds;
+    };
+    const firstValidTriple = (values, startAt = 0) => {
+      for (let i = startAt; i <= values.length - 3; i++) {
+        if (isValidTriple(values[i], values[i + 1], values[i + 2])) return [values[i], values[i + 1], values[i + 2]];
+      }
+      return null;
+    };
     const addCompany = entry => {
-      if (!entry) return;
+      if (!entry || !isValidCompanyName(entry.name) || !isValidTriple(entry.currentWin, entry.currentDraw, entry.currentLoss)) return;
+      entry.name = normalizeCompanyName(entry.name);
       const key = [entry.name, entry.currentWin, entry.currentDraw, entry.currentLoss].join('|');
       if (result.companies.some(c => [c.name, c.currentWin, c.currentDraw, c.currentLoss].join('|') === key)) return;
       result.companies.push(entry);
       result.allOdds.push(entry);
     };
     const makeEntry = (name, odds, rowText, source) => {
-      if (!name || odds.length < 3) return null;
-      const entry = { name, source };
-      if (odds.length >= 6 && odds.slice(0, 6).every(isOdds)) {
-        entry.initialWin = fmt(odds[0]); entry.initialDraw = fmt(odds[1]); entry.initialLoss = fmt(odds[2]);
-        entry.currentWin = fmt(odds[3]); entry.currentDraw = fmt(odds[4]); entry.currentLoss = fmt(odds[5]);
+      if (!isValidCompanyName(name) || odds.length < 3) return null;
+      const entry = { name: normalizeCompanyName(name), source };
+      let initial = null;
+      let current = null;
+      if (odds.length >= 6 && isValidTriple(odds[0], odds[1], odds[2]) && isValidTriple(odds[3], odds[4], odds[5])) {
+        initial = [odds[0], odds[1], odds[2]];
+        current = [odds[3], odds[4], odds[5]];
+      } else {
+        current = firstValidTriple(odds);
+      }
+      if (!current) return null;
+      if (initial) {
+        entry.initialWin = fmt(initial[0]); entry.initialDraw = fmt(initial[1]); entry.initialLoss = fmt(initial[2]);
       } else {
         entry.initialWin = ''; entry.initialDraw = ''; entry.initialLoss = '';
-        entry.currentWin = fmt(odds[0]); entry.currentDraw = fmt(odds[1]); entry.currentLoss = fmt(odds[2]);
       }
+      entry.currentWin = fmt(current[0]); entry.currentDraw = fmt(current[1]); entry.currentLoss = fmt(current[2]);
       const time = pickChangeTime(rowText);
       if (time) entry.changeTime = time;
       return entry;
@@ -432,8 +551,13 @@
           name = a ? clean(a.textContent) : clean(firstTd.textContent);
         }
       }
-      name = compact(name || cells[0] || '').replace(/^[\d一二三四五六七八九十]+[、.．\-]?/, '').replace(/[×√□☑★*]/g, '').substring(0, 20);
-      return isSkipName(name) ? '' : name;
+      name = normalizeCompanyName(name || cells[0] || '');
+      if (isValidCompanyName(name)) return name;
+      for (let i = 0; i < Math.min(3, cells.length); i++) {
+        const cand = normalizeCompanyName(cells[i]);
+        if (isValidCompanyName(cand)) return cand;
+      }
+      return '';
     };
     const detectRowKind = (cells, rowCompact) => {
       for (let i = 0; i < Math.min(4, cells.length); i++) {
@@ -458,13 +582,15 @@
       if (!name && rowKind && lastCompanyName) name = lastCompanyName;
       if (!name) return;
       if (name && !/^(初|即|初盘|即时|初赔|即赔)$/.test(name)) lastCompanyName = name;
-      const odds = cells.slice(1).join(' ').match(/\d{1,2}\.\d{2,3}/g)?.map(Number).filter(isOdds) || [];
+      const odds = parseOddsFromCells(cells, 1);
       if (rowKind && odds.length >= 3) {
+        const triple = firstValidTriple(odds);
+        if (!triple) return;
         const entry = pairedRows[name] || { name, source: 'content-table-paired' };
         if (rowKind === 'initial') {
-          entry.initialWin = fmt(odds[0]); entry.initialDraw = fmt(odds[1]); entry.initialLoss = fmt(odds[2]);
+          entry.initialWin = fmt(triple[0]); entry.initialDraw = fmt(triple[1]); entry.initialLoss = fmt(triple[2]);
         } else {
-          entry.currentWin = fmt(odds[0]); entry.currentDraw = fmt(odds[1]); entry.currentLoss = fmt(odds[2]);
+          entry.currentWin = fmt(triple[0]); entry.currentDraw = fmt(triple[1]); entry.currentLoss = fmt(triple[2]);
           const time = pickChangeTime(rowText);
           if (time) entry.changeTime = time;
         }
@@ -494,15 +620,21 @@
         line = clean(line);
         const firstNum = line.search(/\d{1,2}\.\d{2,3}/);
         if (firstNum <= 0) return;
-        const name = compact(line.slice(0, firstNum)).replace(/^[\d一二三四五六七八九十]+[、.．\-]?/, '').replace(/[×√□☑★*]/g, '').substring(0, 20);
-        if (isSkipName(name)) return;
-        const odds = line.match(/\d{1,2}\.\d{2,3}/g)?.map(Number).filter(isOdds) || [];
+        const name = normalizeCompanyName(line.slice(0, firstNum));
+        if (!isValidCompanyName(name)) return;
+        const odds = [];
+        const re = /(^|[^\d.])(\d{1,2}\.\d{2,3})(?![\d.])/g;
+        let m;
+        while ((m = re.exec(line)) !== null) {
+          const v = parseFloat(m[2]);
+          if (isOdds(v)) odds.push(v);
+        }
         addCompany(makeEntry(name, odds, line, 'content-text-fallback'));
       });
     }
 
     const avg = rows => {
-      rows = rows.filter(x => x && Number.isFinite(parseFloat(x.win)) && Number.isFinite(parseFloat(x.draw)) && Number.isFinite(parseFloat(x.loss)));
+      rows = rows.filter(x => x && isValidTriple(x.win, x.draw, x.loss));
       if (!rows.length) return null;
       const sum = rows.reduce((acc, x) => ({ win: acc.win + parseFloat(x.win), draw: acc.draw + parseFloat(x.draw), loss: acc.loss + parseFloat(x.loss) }), { win: 0, draw: 0, loss: 0 });
       return { win: fmt(sum.win / rows.length), draw: fmt(sum.draw / rows.length), loss: fmt(sum.loss / rows.length) };
@@ -532,7 +664,7 @@
         c.initialReturnRate = ip.returnRate;
         c.initialProbabilities = { win: ip.win, draw: ip.draw, loss: ip.loss };
       }
-      if (marketProbability && c.currentWin && c.currentDraw && c.currentLoss) {
+      if (marketProbability && isValidTriple(c.currentWin, c.currentDraw, c.currentLoss)) {
         const kw = marketProbability.win * parseFloat(c.currentWin);
         const kd = marketProbability.draw * parseFloat(c.currentDraw);
         const kl = marketProbability.loss * parseFloat(c.currentLoss);
@@ -578,11 +710,19 @@
       const type = parseType(cells, rowText);
       if (!type) return null;
       const oddsItems = [];
-      cells.forEach((c, idx) => (clean(c).match(/\d{1,2}\.\d{2,3}/g) || []).forEach(m => {
-        const v = parseFloat(m);
-        if (v >= 1.01 && v <= 30) oddsItems.push({ value: v, cellIndex: idx });
-      }));
+      cells.forEach((c, idx) => {
+        const cell = clean(c);
+        if (!cell || cell.includes('%') || /概率|返还|凯利|主胜率|和率|平率|客胜率/.test(cell)) return;
+        const re = /(^|[^\d.])(\d{1,2}\.\d{2,3})(?![\d.])/g;
+        let m;
+        while ((m = re.exec(cell)) !== null) {
+          const v = parseFloat(m[2]);
+          if (v >= 1.01 && v <= 30) oddsItems.push({ value: v, cellIndex: idx });
+        }
+      });
       if (oddsItems.length < 3) return null;
+      const rateCheck = calcReturnRate(oddsItems[0].value, oddsItems[1].value, oddsItems[2].value);
+      if (!rateCheck || rateCheck < 0.70 || rateCheck > 1.05) return null;
       const counts = [];
       for (let i = oddsItems[2].cellIndex + 1; i < cells.length; i++) {
         if (/^\d+$/.test(clean(cells[i]))) counts.push(parseInt(clean(cells[i]), 10));
@@ -633,29 +773,78 @@
 
   // ===== 角球提取 =====
   function extractCorner() {
-    const result = { allOdds: [] };
-    const text = document.body.innerText;
+    const result = { companies: [], allOdds: [], keyOdds: {}, summary: {} };
+    const text = document.body.innerText || '';
+    const clean = v => String(v || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    const compact = v => clean(v).replace(/\s+/g, '');
+    const WATER_RE = /^[01]\.\d{2}$/;
+    const LINE_RE = /^\d{1,2}(?:\.\d)?(?:\/\d{1,2}(?:\.\d)?)?$/;
+    const isLine = v => LINE_RE.test(clean(v)) && parseFloat(v) >= 7 && parseFloat(v) <= 14;
+    const normalizeCompanyName = raw => compact(raw).replace(/[*★]/g, '').replace(/(走势|详情|主流)$/g, '').substring(0, 15);
+    const isValidName = name => {
+      name = normalizeCompanyName(name);
+      return !!name && name.length <= 15 && !/^(公司|初|即时|大球|小球|角球数|盘口)$/.test(name) && /[\u4e00-\u9fa5A-Za-z]/.test(name);
+    };
+    const extractName = row => {
+      const td = row.querySelector('td');
+      if (!td) return '';
+      let raw = '';
+      td.childNodes.forEach(node => { if (!raw && node.nodeType === 3) raw = clean(node.textContent); });
+      if (!raw) {
+        const a = td.querySelector('a');
+        raw = a ? clean(a.textContent) : clean(td.textContent);
+      }
+      return normalizeCompanyName(raw);
+    };
+    const makeLine = (waters, lines) => {
+      if (waters.length < 4 || lines.length < 1) return null;
+      return {
+        initialOver: waters[0], initialLine: lines[0], initialUnder: waters[1],
+        currentOver: waters[waters.length > 4 ? 3 : 2], currentLine: lines[lines.length > 1 ? 1 : 0], currentUnder: waters[waters.length > 4 ? 4 : 3]
+      };
+    };
 
-    const re = /([01]\.\d{2})\s+(\d{1,2}(?:\.\d)?(?:\/\d{1,2}(?:\.\d)?)?)\s+([01]\.\d{2})/g;
-    const all = [];
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const line = parseFloat(m[2]);
-      if (line >= 7 && line <= 14) all.push({ over: m[1], line: m[2], under: m[3] });
+    document.querySelectorAll('table tr').forEach(row => {
+      const cells = Array.from(row.querySelectorAll('td')).map(c => clean(c.textContent));
+      if (!cells.length) return;
+      const waters = cells.filter(c => WATER_RE.test(c));
+      const lines = cells.filter(isLine);
+      const line = makeLine(waters, lines);
+      if (!line) return;
+      let name = extractName(row);
+      if (!isValidName(name)) name = `C${result.companies.length + 1}`;
+      const entry = { name, ...line };
+      result.companies.push(entry);
+      result.allOdds.push(entry);
+    });
+
+    if (result.companies.length === 0) {
+      const re = /([01]\.\d{2})\s+(\d{1,2}(?:\.\d)?(?:\/\d{1,2}(?:\.\d)?)?)\s+([01]\.\d{2})/g;
+      const all = [];
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        const line = parseFloat(m[2]);
+        if (line >= 7 && line <= 14) all.push({ over: m[1], line: m[2], under: m[3] });
+      }
+      for (let i = 0; i < all.length - 1; i += 2) {
+        const entry = {
+          name: `C${Math.floor(i / 2) + 1}`,
+          initialOver: all[i].over, initialLine: all[i].line, initialUnder: all[i].under,
+          currentOver: all[i+1].over, currentLine: all[i+1].line, currentUnder: all[i+1].under
+        };
+        result.companies.push(entry);
+        result.allOdds.push(entry);
+      }
     }
 
-    for (let i = 0; i < all.length - 1; i += 2) {
-      result.allOdds.push({
-        initialOver: all[i].over, initialLine: all[i].line, initialUnder: all[i].under,
-        currentOver: all[i+1].over, currentLine: all[i+1].line, currentUnder: all[i+1].under
-      });
+    if (result.companies[0]) {
+      result.mainLine  = result.companies[0].currentLine;
+      result.mainOver  = result.companies[0].currentOver;
+      result.mainUnder = result.companies[0].currentUnder;
+      result.keyOdds.ao = { name: result.companies[0].name, ...result.companies[0] };
     }
-
-    if (result.allOdds[0]) {
-      result.mainLine  = result.allOdds[0].currentLine;
-      result.mainOver  = result.allOdds[0].currentOver;
-      result.mainUnder = result.allOdds[0].currentUnder;
-    }
+    if (result.companies[1]) result.keyOdds.crown = { name: result.companies[1].name, ...result.companies[1] };
+    result.keyOdds.allCurrent = result.companies.map(c => ({ name: c.name, over: c.currentOver, line: c.currentLine, under: c.currentUnder }));
 
     return result;
   }

@@ -29,8 +29,7 @@
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    width: 100%;
-    min-width: 520px;
+    width: 760px;
     min-height: 400px;
     font-family: 'Microsoft YaHei', sans-serif;
     font-size: 13px;
@@ -116,17 +115,22 @@
     display: flex;
     background: #161b22;
     border-bottom: 1px solid #30363d;
-    padding: 0 16px;
+    padding: 0 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
   }
+  .tabs::-webkit-scrollbar { display: none; }
   .tab {
-    padding: 8px 14px;
+    padding: 8px 10px;
     cursor: pointer;
     color: #8b949e;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     border-bottom: 2px solid transparent;
     transition: all 0.2s;
     white-space: nowrap;
+    flex-shrink: 0;
   }
   .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
   .tab:hover:not(.active) { color: #c9d1d9; }
@@ -397,14 +401,57 @@
 
 <div class="tabs">
   <div class="tab active" data-tab="monitor">📡 监控</div>
+  <div class="tab" data-tab="daily">📅 今日赛事</div>
   <div class="tab" data-tab="data">📊 盘口</div>
   <div class="tab" data-tab="local">🤖 预测</div>
   <div class="tab" data-tab="ai">✨ AI</div>
   <div class="tab" data-tab="report">📋 报告</div>
   <div class="tab" data-tab="history">🕐 记录</div>
+  <div class="tab" data-tab="dailyrecords">📈 战绩</div>
 </div>
 
 <div class="content">
+
+  <!-- 今日赛事分析 Tab -->
+  <div class="tab-panel" id="tab-daily">
+    <div style="display:flex;gap:6px;padding:8px 0;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" id="fetchTodayBtn" style="flex:1">📅 采集今日比赛</button>
+      <button class="btn btn-sm" id="stopCollectBtn" style="display:none;background:#da363322;border:1px solid #da3633;color:#f85149;white-space:nowrap">⏹ 停止</button>
+      <button class="btn btn-sm" id="collectSelectedBtn" style="display:none;background:#1f6feb22;border:1px solid #1f6feb;color:#58a6ff;white-space:nowrap">📊 采集选中</button>
+      <button class="btn btn-blue" id="batchAIBtn" style="flex:1" disabled>✨ AI批量分析</button>
+      <select id="dailyFilterTier" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">
+        <option value="">全部联赛</option>
+        <option value="顶级赛事">顶级赛事</option>
+        <option value="五大联赛">五大联赛</option>
+        <option value="热门联赛">热门联赛</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div id="dailyMatchList">
+      <div class="empty-state"><div class="emoji">📅</div><p>点击"采集今日比赛"获取今日赛事列表</p></div>
+    </div>
+  </div>
+
+  <!-- 战绩统计 Tab -->
+  <div class="tab-panel" id="tab-dailyrecords">
+    <div style="display:flex;gap:6px;padding:8px 0;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-sm" id="loadRecordsBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e">🔄 刷新</button>
+      <select id="recordsDateFilter" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">
+        <option value="">全部日期</option>
+      </select>
+      <select id="recordsResultFilter" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">
+        <option value="">全部</option>
+        <option value="✓">✓ 命中</option>
+        <option value="✗">✗ 未中</option>
+        <option value="pending">⏳ 待验证</option>
+      </select>
+    </div>
+    <!-- 统计汇总 -->
+    <div id="recordsStats" style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"></div>
+    <div id="dailyRecordsList">
+      <div class="empty-state"><div class="emoji">📈</div><p>AI投注建议记录将在此显示<br>分析今日比赛并由AI推送后自动保存</p></div>
+    </div>
+  </div>
 
   <!-- 监控列表 Tab -->
   <div class="tab-panel active" id="tab-monitor">

@@ -78,6 +78,24 @@ function initButtons() {
   });
   // 历史记录Tab点击时加载
   document.querySelector('[data-tab="history"]').addEventListener('click', loadHistory);
+  // 今日赛事
+  document.getElementById('fetchTodayBtn').addEventListener('click', fetchTodayMatches);
+  document.getElementById('stopCollectBtn').addEventListener('click', () => { collectAborted = true; showAlert('正在停止采集...', 'info', 2000); });
+  document.getElementById('collectSelectedBtn').addEventListener('click', collectSelected);
+  document.getElementById('batchAIBtn').addEventListener('click', runBatchAI);
+  document.getElementById('dailyFilterTier').addEventListener('change', renderDailyList);
+  // 复选框事件委托
+  document.getElementById('dailyMatchList').addEventListener('change', (e) => {
+    if (!e.target.classList.contains('daily-check')) return;
+    const id = e.target.dataset.id;
+    const item = todayMatchItems.find(it => it.match.id === id);
+    if (item) item.checked = e.target.checked;
+  });
+  // 战绩Tab点击时加载
+  document.querySelector('[data-tab="dailyrecords"]').addEventListener('click', loadDailyRecords);
+  document.getElementById('loadRecordsBtn').addEventListener('click', loadDailyRecords);
+  document.getElementById('recordsDateFilter').addEventListener('change', renderDailyRecords);
+  document.getElementById('recordsResultFilter').addEventListener('change', renderDailyRecords);
 
   // AI 对话按钮
   document.getElementById('chatSendBtn').addEventListener('click', sendChatMessage);
@@ -304,6 +322,10 @@ document.addEventListener('click', async (e) => {
       await sendMsg({ type: 'STOP_MONITOR', matchId: id });
       showAlert('已停止监控', 'info', 2000);
       await loadMonitorList();
+      break;
+    }
+    case 'fetchLive': {
+      await fetchLiveAndPredict(id);
       break;
     }
   }
@@ -569,15 +591,29 @@ if (overunder && !overunder.error) {
 }
 
   // 角球
-  if (corner && !corner.error && corner.mainLine) {
+  if (corner && !corner.error && (corner.companies?.length > 0 || corner.mainLine)) {
+    const companies = corner.companies || [];
     html += `<div class="data-section">
       <div class="section-header">🔢 角球盘口</div>
-      <div class="section-body">
-        <div class="stat-row"><span class="stat-label">主流角球线</span><span class="stat-value highlight">${corner.mainLine} 个</span></div>
+      <div class="section-body">`;
+    if (companies.length > 0) {
+      html += `<table class="odds-table">
+        <tr><th>公司</th><th>初大水</th><th>初线</th><th>初小水</th><th>即大水</th><th>即线</th><th>即小水</th></tr>`;
+      companies.slice(0, 5).forEach(c => {
+        const changed = c.initialLine !== c.currentLine;
+        html += `<tr>
+          <td class="company">${c.name}</td>
+          <td>${c.initialOver || '-'}</td><td class="handicap">${c.initialLine || '-'}</td><td>${c.initialUnder || '-'}</td>
+          <td>${c.currentOver || '-'}</td><td class="handicap${changed?' changed':''}">${c.currentLine || '-'}${changed?'⚠️':''}</td><td>${c.currentUnder || '-'}</td>
+        </tr>`;
+      });
+      html += `</table>`;
+    } else {
+      html += `<div class="stat-row"><span class="stat-label">主流角球线</span><span class="stat-value highlight">${corner.mainLine} 个</span></div>
         ${corner.mainOver ? `<div class="stat-row"><span class="stat-label">大角球水位</span><span class="stat-value">${corner.mainOver}</span></div>` : ''}
-        ${corner.mainUnder ? `<div class="stat-row"><span class="stat-label">小角球水位</span><span class="stat-value">${corner.mainUnder}</span></div>` : ''}
-      </div>
-    </div>`;
+        ${corner.mainUnder ? `<div class="stat-row"><span class="stat-label">小角球水位</span><span class="stat-value">${corner.mainUnder}</span></div>` : ''}`;
+    }
+    html += `</div></div>`;
   }
 
   // 战绩
@@ -732,6 +768,7 @@ async function loadMonitorList() {
       </div>
       <div class="monitor-actions">
         <button class="btn btn-blue btn-sm" data-action="selectMatch" data-id="${matchId}">查看</button>
+        <button class="btn btn-sm" style="background:#2d1a1a;border:1px solid #f85149;color:#f85149;padding:4px 6px" data-action="fetchLive" data-id="${matchId}">🔴 滚球</button>
         <button class="btn btn-sm" style="background:#2d1a1a;border:1px solid #f85149;color:#f85149" data-action="stopMonitor" data-id="${matchId}">停止</button>
       </div>
     </div>`;
@@ -795,4 +832,610 @@ function copyToClipboard(text) {
 function escapeHtml(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// =============================================
+// 今日赛事分析
+// =============================================
+
+let todayMatchItems = []; // { match, matchData, profitability }
+let batchAIResult = null; // AI批量分析结果
+
+let collectAborted = false; // 停止采集标志
+
+async function fetchTodayMatches() {
+  setLoading('fetchTodayBtn', true);
+  collectAborted = false;
+  document.getElementById('batchAIBtn').disabled = true;
+  document.getElementById('stopCollectBtn').style.display = 'inline-flex';
+  document.getElementById('collectSelectedBtn').style.display = 'none';
+  showAlert('正在采集今日比赛，页面Ajax加载需等待约15-30秒...', 'info', 30000);
+  try {
+    const resp = await sendMsg({ type: 'FETCH_TODAY_MATCHES' });
+    if (!resp.ok || !resp.matches?.length) {
+      showAlert('未获取到今日比赛。提示：请确保已登录球探网，或手动打开 live.titan007.com 后重试', 'warn', 8000);
+      return;
+    }
+    todayMatchItems = resp.matches.map(m => ({ match: m, matchData: null, profitability: null, checked: false }));
+    showAlert(`✅ 获取到 ${resp.matches.length} 场比赛，可勾选后点"采集选中"，或等待自动采集...`, 'success', 5000);
+    renderDailyList();
+    switchTab('daily');
+    document.getElementById('collectSelectedBtn').style.display = 'inline-flex';
+
+    // 逐场自动采集盘口数据
+    let doneCount = 0;
+    for (let i = 0; i < todayMatchItems.length; i++) {
+      if (collectAborted) break;
+      const item = todayMatchItems[i];
+      if (item.matchData) continue; // 已采集跳过
+      try {
+        const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id });
+        if (dataResp.ok) {
+          item.matchData = dataResp.data;
+          item.profitability = dataResp.profitability;
+          doneCount++;
+        }
+      } catch (e) { /* 单场失败不影响整体 */ }
+      if (i % 5 === 4 || i === todayMatchItems.length - 1) renderDailyList();
+      if (i % 2 === 1) await new Promise(r => setTimeout(r, 1000));
+    }
+    document.getElementById('batchAIBtn').disabled = false;
+    showAlert(collectAborted ? `⏹ 已停止，完成 ${doneCount} 场采集` : `✅ 全部 ${todayMatchItems.length} 场盘口数据采集完成`, 'success', 4000);
+  } catch (e) {
+    showAlert(`采集失败: ${e.message}`, 'error');
+  } finally {
+    setLoading('fetchTodayBtn', false);
+    document.getElementById('stopCollectBtn').style.display = 'none';
+    collectAborted = false;
+  }
+}
+
+async function collectSelected() {
+  const selected = todayMatchItems.filter(it => it.checked);
+  if (!selected.length) { showAlert('请先勾选要采集的比赛', 'warn'); return; }
+  collectAborted = false;
+  document.getElementById('stopCollectBtn').style.display = 'inline-flex';
+  document.getElementById('collectSelectedBtn').disabled = true;
+  showAlert(`正在采集选中的 ${selected.length} 场比赛...`, 'info');
+  let doneCount = 0;
+  for (let i = 0; i < selected.length; i++) {
+    if (collectAborted) break;
+    const item = selected[i];
+    try {
+      const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id });
+      if (dataResp.ok) {
+        item.matchData = dataResp.data;
+        item.profitability = dataResp.profitability;
+        doneCount++;
+      }
+    } catch (e) {}
+    renderDailyList();
+    if (i % 2 === 1) await new Promise(r => setTimeout(r, 800));
+  }
+  document.getElementById('batchAIBtn').disabled = false;
+  document.getElementById('collectSelectedBtn').disabled = false;
+  document.getElementById('stopCollectBtn').style.display = 'none';
+  showAlert(collectAborted ? `⏹ 已停止，完成 ${doneCount} 场` : `✅ 选中 ${doneCount} 场采集完成`, 'success', 3000);
+  collectAborted = false;
+}
+
+function renderDailyList() {
+  const el = document.getElementById('dailyMatchList');
+  const filterTier = document.getElementById('dailyFilterTier').value;
+  let items = todayMatchItems;
+  if (filterTier) items = items.filter(it => it.match.leagueTier === filterTier);
+
+  if (!items.length) {
+    el.innerHTML = `<div class="empty-state"><div class="emoji">📅</div><p>暂无比赛数据<br>点击"采集今日比赛"</p></div>`;
+    return;
+  }
+
+  // 按盈利性评分+联赛优先级排序
+  items = [...items].sort((a, b) => {
+    const pa = (b.match.leaguePriority || 0) * 10 + (b.profitability?.score || 0);
+    const pb = (a.match.leaguePriority || 0) * 10 + (a.profitability?.score || 0);
+    return pa - pb;
+  });
+
+  const tierColors = { '顶级赛事': '#f85149', '五大联赛': '#f0883e', '热门联赛': '#3fb950', '其他': '#8b949e' };
+  let html = `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">共 ${items.length} 场 | 按联赛热门度+价值排序</div>`;
+
+  items.forEach((item, idx) => {
+    const m = item.match;
+    const prof = item.profitability;
+    const tierColor = tierColors[m.leagueTier] || '#8b949e';
+    const scoreColor = prof?.score >= 65 ? '#3fb950' : prof?.score >= 45 ? '#f0883e' : '#8b949e';
+    const collectingLabel = !item.matchData ? ' <span style="color:#484f58;font-size:10px">未采集</span>' : '';
+    const checked = item.checked ? 'checked' : '';
+
+    html += `<div class="data-section" style="margin-bottom:6px" data-match-id="${m.id}">
+      <div class="section-header" style="cursor:default;padding:6px 10px">
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+          <input type="checkbox" class="daily-check" data-id="${m.id}" ${checked} style="accent-color:#58a6ff;cursor:pointer;flex-shrink:0">
+          <span style="color:${tierColor};font-size:10px;background:${tierColor}22;padding:1px 5px;border-radius:3px;white-space:nowrap">${m.leagueTier}</span>
+          <span style="font-size:11px;color:#8b949e;white-space:nowrap">${m.league}</span>
+          <span style="font-weight:600;font-size:12px;color:#e6edf3;white-space:nowrap">${m.home} vs ${m.away}</span>
+          ${m.time ? `<span style="color:#484f58;font-size:10px">${m.time}</span>` : ''}
+          ${m.score ? `<span style="color:#f0883e;font-weight:700;font-size:12px">${m.score}</span>` : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+          ${prof ? `<span style="color:${scoreColor};font-size:11px;font-weight:700">${prof.score}分</span>` : collectingLabel}
+          <button class="btn btn-sm" style="background:#1f6feb22;border:1px solid #1f6feb;color:#58a6ff;font-size:10px" data-action="dailyViewMatch" data-id="${m.id}">盘口</button>
+          <button class="btn btn-sm" style="background:#23863622;border:1px solid #238636;color:#3fb950;font-size:10px" data-action="dailyStartMonitor" data-id="${m.id}" data-home="${escapeHtml(m.home)}" data-away="${escapeHtml(m.away)}">监控</button>
+        </div>
+      </div>`;
+
+    if (prof?.signals?.length > 0 || item.matchData) {
+      html += `<div class="section-body" style="padding:6px 10px">`;
+      // 盘口摘要
+      if (item.matchData) {
+        const { winDrawWin, asian, overunder } = item.matchData;
+        const parts = [];
+        if (winDrawWin?.summary?.averageCurrent) {
+          const s = winDrawWin.summary.averageCurrent;
+          parts.push(`欧赔 主${s.win}/平${s.draw}/客${s.loss}`);
+        }
+        if (asian?.keyOdds?.ao) {
+          const ao = asian.keyOdds.ao;
+          parts.push(`亚盘 ${ao.currentHandicap ?? ao.initialHandicap} 主水${ao.currentHomePay ?? ao.initialHomePay}`);
+        }
+        if (overunder?.keyOdds?.ao) {
+          const ao = overunder.keyOdds.ao;
+          parts.push(`大小 ${ao.currentLine ?? ao.initialLine}`);
+        }
+        if (parts.length) html += `<div style="font-size:11px;color:#8b949e;margin-bottom:4px">${parts.join(' | ')}</div>`;
+      }
+      if (prof?.recommendation) {
+        const recColor = prof.recommendation === '强烈推荐' ? '#3fb950' : prof.recommendation === '推荐' ? '#58a6ff' : '#8b949e';
+        html += `<div style="font-size:11px;color:${recColor};font-weight:600">初步判断: ${prof.recommendation}</div>`;
+      }
+      html += `</div>`;
+    }
+
+    // AI详细分析结果（单场详细）
+    if (item.aiResult?.content) {
+      const shortContent = item.aiResult.content.length > 300
+        ? item.aiResult.content.slice(0, 300) + '...'
+        : item.aiResult.content;
+      html += `<div style="padding:6px 10px 8px;border-top:1px solid #21262d">
+        <div style="font-size:10px;color:#58a6ff;font-weight:600;margin-bottom:4px">🤖 AI详细分析</div>
+        <div style="font-size:11px;color:#d29922;white-space:pre-wrap;line-height:1.5">${escapeHtml(shortContent)}</div>
+        ${item.aiResult.content.length > 300 ? `<button class="btn btn-sm" style="margin-top:4px;font-size:10px;background:#21262d;border:1px solid #30363d;color:#8b949e" data-action="showFullAI" data-id="${m.id}">展开全文</button>` : ''}
+      </div>`;
+    } else if (batchAIResult?.advices) {
+      // 兼容旧批量结果
+      const adv = batchAIResult.advices.find(a => a.matchId === m.id);
+      if (adv && adv.rawLine) {
+        html += `<div style="padding:4px 10px 6px;border-top:1px solid #21262d;font-size:11px;color:#d29922">🤖 AI: ${escapeHtml(adv.rawLine)}</div>`;
+      }
+    }
+
+    html += `</div>`;
+  });
+
+  el.innerHTML = html;
+}
+
+async function runBatchAI() {
+  if (!todayMatchItems.length) { showAlert('请先采集今日比赛', 'warn'); return; }
+
+  // 仅分析勾选的且已有盘口数据的比赛
+  const targetItems = todayMatchItems.filter(it => it.checked && it.matchData);
+  if (!targetItems.length) {
+    showAlert('请先勾选已采集盘口数据的比赛（无数据场次请先采集）', 'warn');
+    return;
+  }
+
+  setLoading('batchAIBtn', true);
+  collectAborted = false;
+  document.getElementById('stopCollectBtn').style.display = 'inline-flex';
+  showAlert(`正在逐场详细AI分析 ${targetItems.length} 场比赛，请稍候...`, 'info', 60000);
+
+  const today = new Date().toLocaleDateString('zh-CN');
+  const allAdvices = [];
+  let allContent = '';
+  let doneCount = 0;
+
+  try {
+    for (let i = 0; i < targetItems.length; i++) {
+      if (collectAborted) break;
+      const item = targetItems[i];
+      const m = item.match;
+
+      showAlert(`🤖 正在分析 (${i+1}/${targetItems.length}): ${m.home} vs ${m.away}...`, 'info', 20000);
+      try {
+        const resp = await sendMsg({
+          type: 'AI_DAILY_SINGLE',
+          matchId: m.id,
+          matchData: item.matchData,
+          matchInfo: { home: m.home, away: m.away, league: m.league, time: m.time }
+        });
+        if (resp.ok && resp.prediction?.content) {
+          item.aiResult = { content: resp.prediction.content, reportMarkdown: resp.reportMarkdown };
+          allContent += `\n\n---\n### ${m.home} vs ${m.away}（${m.league}）\n${resp.prediction.content}`;
+          allAdvices.push({ matchId: m.id, rawLine: resp.prediction.content.slice(0, 200), content: resp.prediction.content });
+          // 解析高价值/中高价值投注建议
+          const betRecs = parseBetAdvicesFromAI(resp.prediction.content, m, m.id, today);
+          if (betRecs.length) {
+            await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
+            console.log(`[Bet] ${m.home}vs${m.away} 提取到 ${betRecs.length} 条高价值建议`);
+          }
+          doneCount++;
+        }
+      } catch (e) {
+        console.warn(`[AI] 分析 ${m.id} 失败:`, e.message);
+      }
+
+      renderDailyList();
+      // AI分析间隔1秒避免速率限制
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    batchAIResult = { content: allContent, advices: allAdvices };
+
+    // 持久化保存
+    await sendMsg({
+      type: 'SAVE_DAILY_AI_RESULT',
+      date: today,
+      matches: todayMatchItems.map(it => ({ ...it.match, profitabilityScore: it.profitability?.score })),
+      aiContent: allContent,
+      aiAdvices: allAdvices
+    });
+
+    renderDailyList();
+    // 自动刷新战绩Tab数据
+    await loadDailyRecords();
+    showAlert(collectAborted
+      ? `⏹ 已停止，完成 ${doneCount} 场AI分析`
+      : `✅ ${doneCount} 场AI详细分析完成，已同步到战绩`, 'success', 5000);
+  } catch (e) {
+    showAlert(`AI分析出错: ${e.message}`, 'error');
+  } finally {
+    setLoading('batchAIBtn', false);
+    document.getElementById('stopCollectBtn').style.display = 'none';
+    collectAborted = false;
+  }
+}
+
+// =============================================
+// 投注记录解析和战绩管理
+// =============================================
+
+/**
+ * 从 AI 回复中解析结构化投注建议
+ * 支持 |盘口|选项|赔率区间|价值评级|仓位| 格式
+ */
+function parseBetAdvicesFromAI(aiContent, matchInfo, matchId, date) {
+  const records = [];
+  if (!aiContent) return records;
+
+  // 匹配竖线分隔的表格行，至少4列
+  const lines = aiContent.split('\n');
+  lines.forEach(line => {
+    line = line.trim();
+    if (!line.startsWith('|') || line.match(/^[|\s-]+$/)) return; // 跳过分隔行和空行
+    const cols = line.split('|').map(c => c.trim()).filter(Boolean);
+    if (cols.length < 4) return;
+
+    // 识别价值列（第4列或含"价值"关键词的列）
+    const valueText = cols[3] || '';
+    const isHighValue = /高价值|中高价值/.test(valueText);
+    if (!isHighValue) return;
+
+    const betType = cols[0] || ''; // 全场亚盘/大小球/角球等
+    const selection = cols[1] || ''; // 选项：主队+0.25等
+    const odds = cols[2] || ''; // 赔率区间
+    const valueLevel = valueText;
+    const position = cols[4] || '';
+
+    if (!betType || !selection) return;
+
+    const id = `${matchId}_${betType}_${selection}_${date}`.replace(/\s+/g, '');
+    records.push({
+      id,
+      date,
+      matchId,
+      matchHome: matchInfo?.home || '',
+      matchAway: matchInfo?.away || '',
+      matchLeague: matchInfo?.league || '',
+      matchTime: matchInfo?.time || '',
+      betType,
+      selection,
+      odds,
+      valueLevel,
+      position,
+      betResult: '',    // ✓ 命中 / ✗ 未中 / 空
+      actualScore: '',
+      createdAt: Date.now()
+    });
+  });
+  return records;
+}
+
+let allBetRecords = [];
+
+async function loadDailyRecords() {
+  const resp = await sendMsg({ type: 'GET_BET_RECORDS' });
+  allBetRecords = resp.records || [];
+
+  // 更新日期筛选器
+  const dateFilter = document.getElementById('recordsDateFilter');
+  const dates = [...new Set(allBetRecords.map(r => r.date))].sort().reverse();
+  dateFilter.innerHTML = `<option value="">全部日期</option>` +
+    dates.map(d => `<option value="${d}">${d}</option>`).join('');
+
+  renderDailyRecords();
+}
+
+function renderDailyRecords() {
+  const el = document.getElementById('dailyRecordsList');
+  const statsEl = document.getElementById('recordsStats');
+  const dateFilter = document.getElementById('recordsDateFilter').value;
+  const resultFilter = document.getElementById('recordsResultFilter').value;
+
+  let records = allBetRecords;
+  if (dateFilter) records = records.filter(r => r.date === dateFilter);
+  if (resultFilter === '✓') records = records.filter(r => r.betResult === '✓');
+  else if (resultFilter === '✗') records = records.filter(r => r.betResult === '✗');
+  else if (resultFilter === 'pending') records = records.filter(r => !r.betResult);
+
+  const total = allBetRecords.length;
+  const verified = allBetRecords.filter(r => r.betResult).length;
+  const hitCount = allBetRecords.filter(r => r.betResult === '✓').length;
+  const missCount = allBetRecords.filter(r => r.betResult === '✗').length;
+  const hitRate = verified > 0 ? ((hitCount / verified) * 100).toFixed(1) : '-';
+
+  statsEl.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:11px">
+      <span style="color:#8b949e">总推荐</span><span style="color:#e6edf3;font-weight:700;margin-left:4px">${total}</span>
+    </div>
+    <div style="background:#1a2d1a;border:1px solid #3fb950;border-radius:6px;padding:6px 12px;font-size:11px">
+      <span style="color:#8b949e">命中</span><span style="color:#3fb950;font-weight:700;margin-left:4px">${hitCount}</span>
+    </div>
+    <div style="background:#2d1a1a;border:1px solid #f85149;border-radius:6px;padding:6px 12px;font-size:11px">
+      <span style="color:#8b949e">未中</span><span style="color:#f85149;font-weight:700;margin-left:4px">${missCount}</span>
+    </div>
+    <div style="background:#1f3a5a;border:1px solid #1f6feb;border-radius:6px;padding:6px 12px;font-size:11px">
+      <span style="color:#8b949e">命中率</span><span style="color:#58a6ff;font-weight:700;margin-left:4px">${hitRate}%</span>
+    </div>
+    <div style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:11px">
+      <span style="color:#8b949e">待验证</span><span style="color:#d29922;font-weight:700;margin-left:4px">${total - verified}</span>
+    </div>`;
+
+  if (!records.length) {
+    el.innerHTML = `<div class="empty-state"><div class="emoji">📈</div><p>暂无高价值投注记录<br>AI分析后自动提取高/中高价值建议</p></div>`;
+    return;
+  }
+
+  // 按日期分组渲染
+  const byDate = {};
+  records.forEach(r => { (byDate[r.date] = byDate[r.date] || []).push(r); });
+
+  let html = '';
+  Object.keys(byDate).sort().reverse().forEach(date => {
+    const dayRecs = byDate[date];
+    const dayHit = dayRecs.filter(r => r.betResult === '✓').length;
+    const dayVerified = dayRecs.filter(r => r.betResult).length;
+    html += `<div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:#58a6ff;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+        <span>📅 ${date}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:10px;color:#8b949e">${dayRecs.length}条 命中${dayVerified > 0 ? (dayHit/dayVerified*100).toFixed(0)+'%' : '-'}</span>
+          <button class="btn btn-sm" style="font-size:10px;background:#2d1a1a;border:1px solid #f85149;color:#f85149;padding:2px 6px"
+            data-action="deleteByDate" data-date="${date}">🗑 删除当日</button>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr style="color:#8b949e;border-bottom:1px solid #30363d;font-size:10px">
+          <th style="text-align:left;padding:3px 4px;min-width:80px">比赛</th>
+          <th style="text-align:left;padding:3px 4px">盘口</th>
+          <th style="text-align:left;padding:3px 4px">选项</th>
+          <th style="text-align:center;padding:3px 4px">赔率</th>
+          <th style="text-align:center;padding:3px 4px">价值</th>
+          <th style="text-align:center;padding:3px 4px">比分</th>
+          <th style="text-align:center;padding:3px 4px">结果</th>
+          <th style="text-align:center;padding:3px 4px">操作</th>
+        </tr></thead><tbody>`;
+
+    dayRecs.forEach(rec => {
+      const resultColor = rec.betResult === '✓' ? '#3fb950' : rec.betResult === '✗' ? '#f85149' : '#484f58';
+      const valueColor = rec.valueLevel === '高价值' ? '#f0883e' : '#58a6ff';
+      const matchName = `${rec.matchHome}vs${rec.matchAway}`;
+      const shortName = matchName.length > 10 ? matchName.slice(0, 10) + '…' : matchName;
+      const safeId = rec.id.replace(/[^a-z0-9]/gi, '_');
+
+      html += `<tr style="border-bottom:1px solid #21262d">
+        <td style="padding:4px;color:#c9d1d9;white-space:nowrap" title="${escapeHtml(matchName)}">${escapeHtml(shortName)}</td>
+        <td style="padding:4px;color:#8b949e;white-space:nowrap;font-size:10px">${escapeHtml(rec.betType)}</td>
+        <td style="padding:4px;color:#e6edf3;white-space:nowrap;font-weight:600">${escapeHtml(rec.selection)}</td>
+        <td style="padding:4px;text-align:center;color:#8b949e;font-size:10px">${escapeHtml(rec.odds||'-')}</td>
+        <td style="padding:4px;text-align:center"><span style="color:${valueColor};font-size:10px;font-weight:600">${escapeHtml(rec.valueLevel)}</span></td>
+        <td style="padding:4px;text-align:center">
+          <input type="text" placeholder="比分" value="${escapeHtml(rec.actualScore||'')}"
+            id="score_${safeId}"
+            style="width:46px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#e6edf3;padding:2px 3px;font-size:10px;text-align:center">
+        </td>
+        <td style="padding:4px;text-align:center">
+          <select id="result_${safeId}"
+            style="background:#0d1117;border:1px solid #30363d;border-radius:3px;color:${resultColor};font-size:10px;padding:1px">
+            <option value="">-</option>
+            <option value="✓" ${rec.betResult==='✓'?'selected':''}>✓ 中</option>
+            <option value="✗" ${rec.betResult==='✗'?'selected':''}>✗ 未中</option>
+          </select>
+        </td>
+        <td style="padding:4px;text-align:center;white-space:nowrap">
+          ${!rec.betResult ? `<button class="btn btn-sm" style="font-size:10px;padding:2px 5px;background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff"
+            data-action="verifyBetRecord" data-id="${escapeHtml(rec.id)}"
+            data-match-id="${escapeHtml(rec.matchId)}"
+            data-bet-type="${escapeHtml(rec.betType)}"
+            data-selection="${escapeHtml(rec.selection)}">🔍验证</button>` : ''}
+          <button class="btn btn-sm" style="font-size:10px;padding:2px 5px;background:#21262d;border:1px solid #30363d;color:#8b949e;margin-left:2px"
+            data-action="saveBetResult" data-id="${escapeHtml(rec.id)}" data-safe="${safeId}">保存</button>
+          <button class="btn btn-sm" style="font-size:10px;padding:2px 5px;background:#2d1a1a;border:1px solid #f85149;color:#f85149;margin-left:2px"
+            data-action="deleteBetRecord" data-id="${escapeHtml(rec.id)}">删</button>
+        </td>
+      </tr>`;
+    });
+
+    html += `</tbody></table></div>`;
+  });
+
+  el.innerHTML = html;
+}
+
+// 事件委托：处理今日赛事和战绩操作
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+
+  if (action === 'dailyViewMatch') {
+    const id = btn.dataset.id;
+    currentMatchId = id;
+    document.getElementById('matchIdInput').value = id;
+    await loadDataForMatch(id);
+    switchTab('data');
+    return;
+  }
+
+  if (action === 'dailyStartMonitor') {
+    const id = btn.dataset.id;
+    const resp = await sendMsg({ type: 'START_MONITOR', matchId: id, intervalMin: 2 });
+    if (resp.ok) {
+      showAlert(`✅ 已启动监控 ${btn.dataset.home} vs ${btn.dataset.away}`, 'success', 3000);
+    }
+    return;
+  }
+
+  if (action === 'showFullAI') {
+    const id = btn.dataset.id;
+    const item = todayMatchItems.find(it => it.match.id === id);
+    if (!item?.aiResult?.content) return;
+    const m = item.match;
+    document.getElementById('reportContent').innerHTML =
+      `<div style="padding:10px"><div style="font-size:12px;color:#58a6ff;font-weight:600;margin-bottom:8px">🤖 ${escapeHtml(m.home)} vs ${escapeHtml(m.away)} AI详细分析</div>
+       <div class="ai-output" style="font-size:12px;white-space:pre-wrap;line-height:1.6">${escapeHtml(item.aiResult.content)}</div>
+       <button class="btn btn-sm" style="margin-top:8px;background:#21262d;border:1px solid #30363d;color:#8b949e" onclick="copyToClipboard(${JSON.stringify(item.aiResult.content)});showAlert('已复制','success',1500)">📋 复制</button></div>`;
+    switchTab('report');
+    return;
+  }
+
+  if (action === 'verifyBetRecord') {
+    const id = btn.dataset.id;
+    const matchId = btn.dataset.matchId;
+    const betType = btn.dataset.betType;
+    const selection = btn.dataset.selection;
+    btn.textContent = '验证中...';
+    btn.disabled = true;
+    try {
+      const resp = await sendMsg({ type: 'VERIFY_BET_RECORD', matchId, betType, selection });
+      if (resp.ok) {
+        // 同步本地记录
+        const rec = allBetRecords.find(r => r.id === id);
+        if (rec) {
+          rec.actualScore = resp.score || rec.actualScore;
+          if (resp.betResult) rec.betResult = resp.betResult;
+        }
+        const resultText = resp.betResult === '✓' ? '✅ 命中' : resp.betResult === '✗' ? '❌ 未中' : '⚠️ 无法自动判断';
+        showAlert(`${resultText} | 比分: ${resp.score || '未知'} | ${resp.autoJudge || ''}`, 'info', 5000);
+        renderDailyRecords();
+      } else {
+        showAlert(`验证失败: ${resp.error}`, 'error');
+        btn.textContent = '🔍验证';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      showAlert(`验证出错: ${e.message}`, 'error');
+      btn.textContent = '🔍验证';
+      btn.disabled = false;
+    }
+    return;
+  }
+
+  if (action === 'saveBetResult') {
+    const id = btn.dataset.id;
+    const safeId = btn.dataset.safe;
+    const score = document.getElementById(`score_${safeId}`)?.value || '';
+    const result = document.getElementById(`result_${safeId}`)?.value || '';
+    await sendMsg({ type: 'UPDATE_BET_RECORD', id, actualScore: score, betResult: result });
+    // 同步本地
+    const rec = allBetRecords.find(r => r.id === id);
+    if (rec) { rec.actualScore = score; rec.betResult = result; }
+    showAlert('✅ 结果已保存', 'success', 1500);
+    renderDailyRecords();
+    return;
+  }
+
+  if (action === 'deleteBetRecord') {
+    const id = btn.dataset.id;
+    if (!confirm('确定删除该条投注记录？')) return;
+    await sendMsg({ type: 'DELETE_BET_RECORD', id });
+    allBetRecords = allBetRecords.filter(r => r.id !== id);
+    renderDailyRecords();
+    return;
+  }
+
+  if (action === 'deleteByDate') {
+    const date = btn.dataset.date;
+    if (!confirm(`确定删除 ${date} 的所有投注记录？`)) return;
+    await sendMsg({ type: 'DELETE_BET_RECORDS_BY_DATE', date });
+    allBetRecords = allBetRecords.filter(r => r.date !== date);
+    renderDailyRecords();
+    return;
+  }
+
+  if (action === 'saveMatchResult') {
+    // 兼容旧代码，实际不再使用
+    showAlert('请在战绩Tab使用新的验证功能', 'info', 2000);
+  }
+});
+
+// 监控列表中的滚球预测按钮
+async function fetchLiveAndPredict(matchId) {
+  showAlert(`正在采集滚球数据 ${matchId}...`, 'info');
+  try {
+    const resp = await sendMsg({ type: 'FETCH_LIVE_DATA', matchId });
+    if (resp.ok && resp.data) {
+      renderLiveData(matchId, resp.data);
+    } else {
+      showAlert('滚球数据采集失败', 'warn');
+    }
+  } catch (e) {
+    showAlert(e.message, 'error');
+  }
+}
+
+function renderLiveData(matchId, liveData) {
+  const { matchInfo, liveScore, events, asianLive, ouLive } = liveData;
+  const home = matchInfo?.home || '主队';
+  const away = matchInfo?.away || '客队';
+  const score = liveScore?.score || '-:-';
+  const minute = liveScore?.minute || '';
+  const period = liveScore?.period || '';
+
+  let html = `<div class="data-section">
+    <div class="section-header" style="color:#f85149">🔴 滚球实时数据 - ${escapeHtml(home)} vs ${escapeHtml(away)}</div>
+    <div class="section-body">
+      <div class="stat-row"><span class="stat-label">比分</span><span class="stat-value highlight" style="font-size:18px">${score}</span></div>
+      ${minute ? `<div class="stat-row"><span class="stat-label">时间</span><span class="stat-value">${minute}' ${period}</span></div>` : ''}
+      ${asianLive?.handicap ? `<div class="stat-row"><span class="stat-label">实时亚盘</span><span class="stat-value">${asianLive.handicap} 主${asianLive.homeWater}/客${asianLive.awayWater}</span></div>` : ''}
+      ${ouLive?.line ? `<div class="stat-row"><span class="stat-label">实时大小球</span><span class="stat-value">${ouLive.line} 大${ouLive.overWater}/小${ouLive.underWater}</span></div>` : ''}
+    </div>
+  </div>`;
+
+  if (events?.length > 0) {
+    html += `<div class="data-section">
+      <div class="section-header">⚽ 比赛事件</div>
+      <div class="section-body"><div class="signal-list">`;
+    events.forEach(ev => {
+      const icon = ev.type === 'goal' ? '⚽' : '🟥';
+      html += `<div class="signal-item"><div class="signal-dot positive"></div>${icon} ${ev.minute}' ${escapeHtml(ev.player || '')}</div>`;
+    });
+    html += `</div></div></div>`;
+  }
+
+  // 插入到监控列表项下方或数据面板
+  const dataEl = document.getElementById('dataContent');
+  dataEl.innerHTML = html + (dataEl.innerHTML || '');
+  switchTab('data');
 }
