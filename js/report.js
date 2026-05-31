@@ -71,32 +71,88 @@ export class ReportGenerator {
     // ========== 进球数据 ==========
     sections.push(`## 六、进球数据分析`);
 
+    const fmtObjRow = (label, obj, keys) => `| ${label} | ${keys.map(k => obj?.[k] || '-').join(' | ')} |`;
+    const fmtPct = v => v ? `${v.games || '-'}场/${v.pct || '-'}%` : '-';
+
+    // 入球数/上下半场入球分布
+    if (analysis?.recentGoalDistribution?.home || analysis?.recentGoalDistribution?.away) {
+      const goalKeys = ['0球','1球','2球','3球','4+','上半场','下半场'];
+      sections.push(`### 入球数 / 上下半场入球分布`);
+      sections.push(`| 队伍 | 0球 | 1球 | 2球 | 3球 | 4+ | 上半场入球 | 下半场入球 |`);
+      sections.push(`|------|-----|-----|-----|-----|----|------------|------------|`);
+      [['总', '总'], ['主', '主'], ['客', '客']].forEach(([label, key]) => {
+        sections.push(fmtObjRow(`${home}${label}`, analysis.recentGoalDistribution.home?.[key], goalKeys));
+      });
+      [['总', '总'], ['主', '主'], ['客', '客']].forEach(([label, key]) => {
+        sections.push(fmtObjRow(`${away}${label}`, analysis.recentGoalDistribution.away?.[key], goalKeys));
+      });
+      sections.push('');
+    }
+
+    // 半全场
+    if (analysis?.halfFull?.home || analysis?.halfFull?.away) {
+      const hfKeys = ['胜胜','胜和','胜负','和胜','和和','和负','负胜','负和','负负'];
+      sections.push(`### 半全场分布`);
+      sections.push(`| 队伍 | 胜胜 | 胜和 | 胜负 | 和胜 | 和和 | 和负 | 负胜 | 负和 | 负负 |`);
+      sections.push(`|------|------|------|------|------|------|------|------|------|------|`);
+      ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${home}${k}`, analysis.halfFull.home?.[k], hfKeys)));
+      ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${away}${k}`, analysis.halfFull.away?.[k], hfKeys)));
+      sections.push('');
+    }
+
     // 进球数/单双
-    if (analysis?.goalSingleDouble?.homeTotal) {
+    if (analysis?.goalSingleDouble?.homeTotal || analysis?.goalSingleDouble?.home || analysis?.goalSingleDouble?.away) {
       const sd = analysis.goalSingleDouble;
-      sections.push(`### 进球大小/单双`);
-      sections.push(`| 队伍 | 大球 | 小球 | 单数 | 双数 |`);
-      sections.push(`|------|------|------|------|------|`);
-      const fmtSD = (obj) => obj ? `${obj.big?.pct||'-'}% | ${obj.small?.pct||'-'}% | ${obj.odd?.pct||'-'}% | ${obj.even?.pct||'-'}%` : '-|-|-|-';
-      sections.push(`| ${home}总 | ${fmtSD(sd.homeTotal)} |`);
-      sections.push(`| ${away}总 | ${fmtSD(sd.awayTotal)} |`);
+      const sdKeys = ['大','小','走','单','双'];
+      sections.push(`### 进球大小 / 单双`);
+      sections.push(`| 队伍 | 大 | 小 | 走 | 单 | 双 |`);
+      sections.push(`|------|---|---|---|---|---|`);
+      if (sd.home || sd.away) {
+        ['总','主','客'].forEach(k => sections.push(`| ${home}${k} | ${sdKeys.map(x => fmtPct(sd.home?.[k]?.[x])).join(' | ')} |`));
+        ['总','主','客'].forEach(k => sections.push(`| ${away}${k} | ${sdKeys.map(x => fmtPct(sd.away?.[k]?.[x])).join(' | ')} |`));
+      } else {
+        const fmtSD = (obj) => obj ? `${obj.big?.pct||'-'}% | ${obj.small?.pct||'-'}% | ${obj.draw?.pct||'-'}% | ${obj.odd?.pct||'-'}% | ${obj.even?.pct||'-'}%` : '- | - | - | - | -';
+        sections.push(`| ${home}总 | ${fmtSD(sd.homeTotal)} |`);
+        sections.push(`| ${away}总 | ${fmtSD(sd.awayTotal)} |`);
+      }
+      sections.push('');
     }
 
     // 进球时间分布
-    if (analysis?.goalTimeDistribution?.raw?.length > 0) {
-      sections.push(`### 进球时间分布 (1-10 | 11-20 | 21-30 | 31-40 | 41-45 | 46-50 | 51-60 | 61-70 | 71-80 | 81-90+)`);
-      analysis.goalTimeDistribution.raw.forEach(row => {
-        sections.push(`- ${row}`);
-      });
+    const gt = analysis?.goalTimeDistribution || {};
+    if (gt.home || gt.away || gt.rows?.length > 0) {
+      const timeKeys = ['1-10','11-20','21-30','31-40','41-45','46-50','51-60','61-70','71-80','81-90+'];
+      sections.push(`### 进球时间分布`);
+      sections.push(`| 队伍 | 1-10 | 11-20 | 21-30 | 31-40 | 41-45 | 46-50 | 51-60 | 61-70 | 71-80 | 81-90+ |`);
+      sections.push(`|------|------|-------|-------|-------|-------|-------|-------|-------|-------|--------|`);
+      ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${home}${k}`, gt.home?.[k], timeKeys)));
+      ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${away}${k}`, gt.away?.[k], timeKeys)));
+      if (gt.homeFirst || gt.awayFirst) {
+        sections.push('');
+        sections.push(`**第一个进球时间统计**`);
+        sections.push(`| 队伍 | 1-10 | 11-20 | 21-30 | 31-40 | 41-45 | 46-50 | 51-60 | 61-70 | 71-80 | 81-90+ |`);
+        sections.push(`|------|------|-------|-------|-------|-------|-------|-------|-------|-------|--------|`);
+        ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${home}${k}`, gt.homeFirst?.[k], timeKeys)));
+        ['总','主','客'].forEach(k => sections.push(fmtObjRow(`${away}${k}`, gt.awayFirst?.[k], timeKeys)));
+      }
+      sections.push('');
     }
 
     // 数据比较（平均进失球）
     const dc = analysis?.dataComparison;
-    if (dc?.home?.avgGoal || dc?.allNumbers?.length > 0) {
-      sections.push(`### 关键统计数据`);
-      if (dc.home?.avgGoal) sections.push(`- ${home} 平均进球: **${dc.home.avgGoal}** / 平均失球: ${dc.home.avgLoss || '-'}`);
-      if (dc.home?.netWin2Plus) sections.push(`- ${home} 净胜2球+: ${dc.home.netWin2Plus.pct}% (${dc.home.netWin2Plus.games}场)`);
-      if (dc.home?.totalGoals) sections.push(`- ${home} 本赛季总进球: ${dc.home.totalGoals}`);
+    const sc = analysis?.seasonComparison;
+    if (dc?.home?.avgGoal || sc?.home?.goals?.total || sc?.away?.goals?.total) {
+      sections.push(`### 本赛季数据统计比较`);
+      const fmtGoalBlock = (team, comp) => {
+        const g = comp?.goals || {};
+        const lines = [];
+        if (g.total) lines.push(`- ${team} 总计: 进${g.total.goalsFor}失${g.total.goalsAgainst}，场均进${g.total.avgGoal}/失${g.total.avgLoss}`);
+        if (g.venue) lines.push(`- ${team} 主/客场: 进${g.venue.goalsFor}失${g.venue.goalsAgainst}，场均进${g.venue.avgGoal}/失${g.venue.avgLoss}`);
+        if (g.last6) lines.push(`- ${team} 近6场: 进${g.last6.goalsFor}失${g.last6.goalsAgainst}，场均进${g.last6.avgGoal}/失${g.last6.avgLoss}`);
+        return lines;
+      };
+      sections.push(...fmtGoalBlock(home, sc?.home));
+      sections.push(...fmtGoalBlock(away, sc?.away));
     }
     sections.push('');
 
@@ -321,6 +377,14 @@ export class ReportGenerator {
         asian: asian?.keyOdds,
         overunder: overunder?.keyOdds,
         corner: { mainLine: corner?.mainLine, companies: corner?.companies?.slice(0,3) },
+        recentStats: analysis?.recentStats,
+        richStats: {
+          recentGoalDistribution: analysis?.recentGoalDistribution,
+          halfFull: analysis?.halfFull,
+          goalSingleDouble: analysis?.goalSingleDouble,
+          goalTimeDistribution: analysis?.goalTimeDistribution,
+          seasonComparison: analysis?.seasonComparison
+        },
         injuries: analysis?.injuries,
         preBriefing: analysis?.preBriefing,
         summary: this._quickSummary(analysis, winDrawWin, asian, overunder)
@@ -382,6 +446,11 @@ export class ReportGenerator {
     }
     if (analysis?.preBriefing) {
       summary.push(`简报摘要：${analysis.preBriefing.substring(0, 100)}...`);
+    }
+    if (analysis?.seasonComparison?.home?.goals?.total || analysis?.seasonComparison?.away?.goals?.total) {
+      const hg = analysis.seasonComparison.home?.goals?.total;
+      const ag = analysis.seasonComparison.away?.goals?.total;
+      summary.push(`场均进失球：主 ${hg?.avgGoal || '-'}/${hg?.avgLoss || '-'}，客 ${ag?.avgGoal || '-'}/${ag?.avgLoss || '-'}`);
     }
     if (analysis?.injuries) {
       const hi = analysis.injuries.home?.length || 0;
