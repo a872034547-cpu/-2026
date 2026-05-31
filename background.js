@@ -358,9 +358,9 @@ async function handleMessage(msg, sender, sendResponse) {
 
       case 'VERIFY_BET_RECORD': {
         // 自动采集赛果比分，判断投注是否命中
-        const { matchId: vMatchId, betType, selection } = msg;
+        const { matchId: vMatchId, betType, selection, matchHome: vMatchHome, matchAway: vMatchAway } = msg;
         try {
-          const verifyRes = await verifyBetRecord(vMatchId, betType, selection);
+          const verifyRes = await verifyBetRecord(vMatchId, betType, selection, vMatchHome, vMatchAway);
           // 命中/未中/半赢半输 时自动保存
           if (verifyRes.betResult) {
             const r2 = await chrome.storage.local.get('bet_records');
@@ -1076,11 +1076,40 @@ function extractPageData(dataType) {
       }
     }
 
-    // 按页面顺序：全场表1=主队，全场表2=客队（页面中主队在前）
-    if (statsTables.length >= 1) result.homeStats = statsTables[0].data;
-    if (statsTables.length >= 2) result.awayStats = statsTables[1].data;
-    if (statsTables.length >= 3) result.homeHalfStats = statsTables[2].data;
-    if (statsTables.length >= 4) result.awayHalfStats = statsTables[3].data;
+    // 用前置标题/队名锚定全场/半场战绩表归属，避免因页面中有其他匹配表导致顺序错乱
+    var statsOwnerOf = function(tbl) {
+      var hName = result.matchInfo.home || '';
+      var aName = result.matchInfo.away || '';
+      var ctx = '';
+      var node = tbl.previousElementSibling;
+      for (var s = 0; node && s < 8; s++, node = node.previousElementSibling) ctx += ' ' + node.textContent;
+      if (hName && ctx.indexOf(hName) >= 0 && (!aName || ctx.indexOf(aName) < 0)) return 'home';
+      if (aName && ctx.indexOf(aName) >= 0 && (!hName || ctx.indexOf(hName) < 0)) return 'away';
+      return '';
+    };
+    var homeFullIdx = -1, awayFullIdx = -1, homeHalfIdx = -1, awayHalfIdx = -1;
+    statsTables.forEach(function(st, i) {
+      var owner = statsOwnerOf(allTables[st.idx]);
+      if (owner === 'home') {
+        if (homeFullIdx < 0) homeFullIdx = i;
+        else if (homeHalfIdx < 0) homeHalfIdx = i;
+      } else if (owner === 'away') {
+        if (awayFullIdx < 0) awayFullIdx = i;
+        else if (awayHalfIdx < 0) awayHalfIdx = i;
+      }
+    });
+    // 未能按队名匹配的，按出现顺序补全（兜底）
+    var unmatchedStats = statsTables.map(function(_, i) { return i; }).filter(function(i) {
+      return i !== homeFullIdx && i !== awayFullIdx && i !== homeHalfIdx && i !== awayHalfIdx;
+    });
+    if (homeFullIdx < 0 && unmatchedStats.length > 0) { homeFullIdx = unmatchedStats.shift(); }
+    if (awayFullIdx < 0 && unmatchedStats.length > 0) { awayFullIdx = unmatchedStats.shift(); }
+    if (homeHalfIdx < 0 && unmatchedStats.length > 0) { homeHalfIdx = unmatchedStats.shift(); }
+    if (awayHalfIdx < 0 && unmatchedStats.length > 0) { awayHalfIdx = unmatchedStats.shift(); }
+    if (homeFullIdx >= 0) result.homeStats = statsTables[homeFullIdx].data;
+    if (awayFullIdx >= 0) result.awayStats = statsTables[awayFullIdx].data;
+    if (homeHalfIdx >= 0) result.homeHalfStats = statsTables[homeHalfIdx].data;
+    if (awayHalfIdx >= 0) result.awayHalfStats = statsTables[awayHalfIdx].data;
 
     // ---- 盘路走势 ----
     var rm;
@@ -2486,7 +2515,7 @@ async function runDeepPrediction(stored, matchId, recentStats) {
 
 // ===== 战绩验证：采集赛果比分 + 判断盘口命中 =====
 // 比分来源优先级：滚球/现场分析页(liveScore，完场后即最终比分) → analysis页兜底
-async function verifyBetRecord(matchId, betType, selection) {
+async function verifyBetRecord(matchId, betType, selection, matchHome, matchAway) {
   let score = '';
   let homeGoals = NaN, awayGoals = NaN;
   let scoreSource = '';
@@ -2591,9 +2620,17 @@ async function verifyBetRecord(matchId, betType, selection) {
     } else {
       autoJudge = `比分${homeGoals}-${awayGoals}，大小盘口无法解析，请手动判断`;
     }
-  } else if (bt.includes('亚盘') || bt.includes('让球') || bt.includes('让') || /主|客|home|away/i.test(sel)) {
+  } else if (bt.includes('亚盘') || bt.includes('让球') || bt.includes('让') || /主|客|home|away/i.test(sel) || (matchHome && sel.includes(matchHome)) || (matchAway && sel.includes(matchAway))) {
     // 亚盘让球
-    const isHome = /主|home/i.test(sel) || (!/(客|away)/i.test(sel) && /^[+-]/.test(sel) === false && diff >= 0);
+    // 优先用队名判断押主还是押客（AI生成的selection如"阿森纳+0.25"带队名）
+    let isHome;
+    if (matchHome && matchAway) {
+      if (sel.includes(matchHome)) isHome = true;
+      else if (sel.includes(matchAway)) isHome = false;
+      else isHome = /主|home/i.test(sel) || (!/(客|away)/i.test(sel) && diff >= 0);
+    } else {
+      isHome = /主|home/i.test(sel) || (!/(客|away)/i.test(sel) && /^[+-]/.test(sel) === false && diff >= 0);
+    }
     // 让球方向：选项里带"-"或"受让"语义
     let h = parseHandicapValue(sel);
     if (!isFinite(h)) {

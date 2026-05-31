@@ -661,6 +661,7 @@
   <div class="tab-panel" id="tab-dailyrecords">
     <div class="compact-toolbar">
       <button class="btn btn-sm" id="loadRecordsBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e">🔄 刷新</button>
+      <button class="btn btn-sm" id="verifyAllBtn" style="background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff">⚡ 一键验证</button>
       <select id="recordsDateFilter" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">
         <option value="">全部日期</option>
       </select>
@@ -669,6 +670,10 @@
         <option value="✓">✓ 命中</option>
         <option value="✗">✗ 未中</option>
         <option value="pending">⏳ 待验证</option>
+      </select>
+      <select id="recordsSortMode" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">
+        <option value="date">按日期</option>
+        <option value="value">按价值</option>
       </select>
     </div>
     <!-- 统计汇总 -->

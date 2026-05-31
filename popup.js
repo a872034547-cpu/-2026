@@ -143,6 +143,9 @@ function initButtons() {
   document.querySelector('[data-tab="dailyrecords"]').addEventListener('click', loadDailyRecords);
   document.getElementById('loadRecordsBtn').addEventListener('click', loadDailyRecords);
   document.getElementById('recordsDateFilter').addEventListener('change', renderDailyRecords);
+  document.getElementById('recordsSortMode').addEventListener('change', renderDailyRecords);
+  // verifyAllBtn 由事件委托处理，只需设 data-action 即可
+  document.getElementById('verifyAllBtn').dataset.action = 'verifyAllPending';
   document.getElementById('recordsResultFilter').addEventListener('change', renderDailyRecords);
 
   // AI 对话按钮
@@ -1310,6 +1313,17 @@ function renderDailyRecords() {
     return;
   }
 
+  // 排序：按价值（高价值>中高价值>其他），再按日期倒序
+  const valuePriority = v => v === '高价值' ? 0 : v === '中高价值' ? 1 : 2;
+  const sortMode = document.getElementById('recordsSortMode')?.value || 'date';
+  if (sortMode === 'value') {
+    records = [...records].sort((a, b) => {
+      const vd = valuePriority(a.valueLevel) - valuePriority(b.valueLevel);
+      if (vd !== 0) return vd;
+      return (b.date || '').localeCompare(a.date || '');
+    });
+  }
+
   // 按日期分组渲染
   const byDate = {};
   records.forEach(r => { (byDate[r.date] = byDate[r.date] || []).push(r); });
@@ -1383,6 +1397,8 @@ function renderDailyRecords() {
             ${!rec.betResult ? `<button class="btn btn-sm" style="background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff"
               data-action="verifyBetRecord" data-id="${escapeHtml(rec.id)}"
               data-match-id="${escapeHtml(rec.matchId)}"
+              data-match-home="${escapeHtml(rec.matchHome||'')}"
+              data-match-away="${escapeHtml(rec.matchAway||'')}"
               data-bet-type="${escapeHtml(rec.betType)}"
               data-selection="${escapeHtml(rec.selection)}">验</button>` : ''}
             <button class="btn btn-sm" style="background:#21262d;border:1px solid #30363d;color:#8b949e"
@@ -1445,7 +1461,8 @@ document.addEventListener('click', async (e) => {
     btn.textContent = '验证中...';
     btn.disabled = true;
     try {
-      const resp = await sendMsg({ type: 'VERIFY_BET_RECORD', matchId, betType, selection });
+      const resp = await sendMsg({ type: 'VERIFY_BET_RECORD', matchId, betType, selection,
+        matchHome: btn.dataset.matchHome || '', matchAway: btn.dataset.matchAway || '' });
       if (resp.ok) {
         // 同步本地记录
         const rec = allBetRecords.find(r => r.id === id);
@@ -1467,6 +1484,33 @@ document.addEventListener('click', async (e) => {
       btn.textContent = '🔍验证';
       btn.disabled = false;
     }
+    return;
+  }
+
+  if (action === 'verifyAllPending') {
+    // 一键验证所有待验证记录
+    const pending = allBetRecords.filter(r => !r.betResult);
+    if (!pending.length) { showAlert('没有待验证的记录', 'info', 2000); return; }
+    const verifyAllBtn = document.getElementById('verifyAllBtn');
+    if (verifyAllBtn) { verifyAllBtn.textContent = `验证中(0/${pending.length})...`; verifyAllBtn.disabled = true; }
+    let done = 0, hit = 0, miss = 0;
+    for (const rec of pending) {
+      try {
+        const resp = await sendMsg({ type: 'VERIFY_BET_RECORD', matchId: rec.matchId, betType: rec.betType, selection: rec.selection,
+          matchHome: rec.matchHome || '', matchAway: rec.matchAway || '' });
+        if (resp.ok && resp.betResult) {
+          rec.actualScore = resp.score || rec.actualScore;
+          rec.betResult = resp.betResult;
+          if (resp.betResult === '✓') hit++;
+          else if (resp.betResult === '✗') miss++;
+        }
+      } catch {}
+      done++;
+      if (verifyAllBtn) verifyAllBtn.textContent = `验证中(${done}/${pending.length})...`;
+    }
+    if (verifyAllBtn) { verifyAllBtn.textContent = '⚡ 一键验证'; verifyAllBtn.disabled = false; }
+    showAlert(`批量验证完成：命中${hit}，未中${miss}，其余${pending.length-hit-miss}场无法自动判断`, 'success', 6000);
+    renderDailyRecords();
     return;
   }
 
