@@ -1454,7 +1454,7 @@ function extractPageData(dataType) {
     if (awayScoresM) result.playerRatings.away10 = (awayScoresM[1].match(/\d+\.\d+/g)||[]).slice(0,10);
 
     // ---- 赛前简报 ----
-    var briefM = text.match(/赛前简报\s*\n([\s\S]{50,2000}?)(?:\n##|\n本赛季|\n\*\*)/);
+    var briefM = text.match(/赛前简报[\s\n]+([\s\S]{20,3000}?)(?:\n+(?:本赛季|以上资料|##|\*\*以上))/);
     if (briefM) result.preBriefing = briefM[1].trim();
 
     // ---- 本赛季数据统计比较 / 主客队得失球统计 ----
