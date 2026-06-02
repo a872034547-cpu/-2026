@@ -378,7 +378,7 @@ async function handleMessage(msg, sender, sendResponse) {
       case 'FETCH_MATCH_QUICK_DATA': {
         // 快速采集单场比赛核心数据：analysis 富统计 + 亚盘 + 欧赔 + 大小球
         // preferServer=true 时优先从服务器加载，服务器无数据再打开标签页采集
-        const { matchId, preferServer } = msg;
+        const { matchId, preferServer, league, home, away, matchTime } = msg;
         try {
           // 优先从服务器加载
           if (preferServer) {
@@ -409,6 +409,15 @@ async function handleMessage(msg, sender, sendResponse) {
             data.winDrawWin = finalizeWinDrawWin(data.winDrawWin);
           }
           if (data.analysis?.recentStats) data.recentStats = data.analysis.recentStats;
+          // 将今日比赛列表中的 league/home/away/time 补入 matchInfo（分析页不含赛事名）
+          if (league || home || away || matchTime) {
+            if (!data.analysis) data.analysis = {};
+            if (!data.analysis.matchInfo) data.analysis.matchInfo = {};
+            if (league) data.analysis.matchInfo.league = data.analysis.matchInfo.league || league;
+            if (home) data.analysis.matchInfo.home = data.analysis.matchInfo.home || home;
+            if (away) data.analysis.matchInfo.away = data.analysis.matchInfo.away || away;
+            if (matchTime) data.analysis.matchInfo.time = data.analysis.matchInfo.time || matchTime;
+          }
           await storeData(matchId, data);
           const profitability = calcProfitabilityScore(data);
           sendResponse({ ok: true, data, profitability, source: 'live' });

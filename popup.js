@@ -1071,7 +1071,7 @@ async function fetchTodayMatches() {
         continue;
       }
       try {
-        const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id });
+        const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id, league: item.match.league, home: item.match.home, away: item.match.away, matchTime: item.match.time });
         if (dataResp.ok) {
           item.matchData = dataResp.data;
           item.profitability = dataResp.profitability;
@@ -1108,7 +1108,7 @@ async function collectSelected() {
     if (collectAborted) break;
     const item = selected[i];
     try {
-      const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id });
+      const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id, league: item.match.league, home: item.match.home, away: item.match.away, matchTime: item.match.time });
       if (dataResp.ok) {
         item.matchData = dataResp.data;
         item.profitability = dataResp.profitability;
