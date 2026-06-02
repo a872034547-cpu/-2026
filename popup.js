@@ -492,6 +492,17 @@ async function runAIPredict() {
       const model = resp.prediction.model || resp.prediction.provider || 'AI';
       const tokens = resp.prediction.tokens ? ` | ${resp.prediction.tokens} tokens` : '';
       appendChatMsg('assistant', resp.prediction.content, `${model}${tokens} · ${new Date().toLocaleTimeString('zh-CN')}`);
+      // 自动解析并保存投注建议到战绩
+      try {
+        const stored = await sendMsg({ type: 'GET_STORED_DATA', matchId });
+        const mi = stored?.data?.analysis?.matchInfo || {};
+        const today = new Date().toLocaleDateString('zh-CN');
+        const betRecs = parseBetAdvicesFromAI(resp.prediction.content, { home: mi.home, away: mi.away, league: mi.league, time: mi.time }, matchId, today);
+        if (betRecs.length) {
+          await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
+          showAlert(`✅ 已自动保存 ${betRecs.length} 条投注建议到战绩`, 'success', 3000);
+        }
+      } catch(e) { console.warn('[BetSave]', e.message); }
     } else if (resp.error?.includes('API Key')) {
       appendChatMsg('assistant', '⚠️ 请先在设置页面配置 AI API Key\n点击右上角 ⚙ 进行配置');
     } else {
@@ -548,6 +559,17 @@ async function runDeepAIPredict() {
       const model = resp.prediction.model || resp.prediction.provider || 'AI';
       const tokens = resp.prediction.tokens ? ` | ${resp.prediction.tokens} tokens` : '';
       appendChatMsg('assistant', resp.prediction.content, `🧠 ${model}${tokens} · ${stepNote} · ${new Date().toLocaleTimeString('zh-CN')}`);
+      // 自动解析并保存投注建议到战绩
+      try {
+        const stored = await sendMsg({ type: 'GET_STORED_DATA', matchId });
+        const mi = stored?.data?.analysis?.matchInfo || {};
+        const today = new Date().toLocaleDateString('zh-CN');
+        const betRecs = parseBetAdvicesFromAI(resp.prediction.content, { home: mi.home, away: mi.away, league: mi.league, time: mi.time }, matchId, today);
+        if (betRecs.length) {
+          await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
+          showAlert(`✅ 已自动保存 ${betRecs.length} 条投注建议到战绩`, 'success', 3000);
+        }
+      } catch(e) { console.warn('[BetSave]', e.message); }
     } else if (resp.error?.includes('API Key')) {
       appendChatMsg('assistant', '⚠️ 请先在设置页面配置 AI API Key\n点击右上角 ⚙ 进行配置');
     } else {
@@ -1377,26 +1399,36 @@ function parseBetAdvicesFromAI(aiContent, matchInfo, matchId, date) {
   const records = [];
   if (!aiContent) return records;
 
-  // 匹配竖线分隔的表格行，至少4列
   const lines = aiContent.split('\n');
   lines.forEach(line => {
     line = line.trim();
-    if (!line.startsWith('|') || line.match(/^[|\s-]+$/)) return; // 跳过分隔行和空行
+    if (!line.startsWith('|') || line.match(/^[|\s-]+$/)) return;
     const cols = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cols.length < 4) return;
+    if (cols.length < 3) return;
 
-    // 识别价值列（第4列或含"价值"关键词的列）
-    const valueText = cols[3] || '';
-    const isHighValue = /高价值|中高价值/.test(valueText);
-    if (!isHighValue) return;
+    // 兼容多种列数：找含"价值/推荐/建议"关键词的列，或默认第4列
+    let valueText = '';
+    let betType = '', selection = '', odds = '', position = '';
+    if (cols.length >= 4) {
+      betType    = cols[0] || '';
+      selection  = cols[1] || '';
+      odds       = cols[2] || '';
+      valueText  = cols[3] || '';
+      position   = cols[4] || '';
+    } else if (cols.length === 3) {
+      betType   = cols[0] || '';
+      selection = cols[1] || '';
+      valueText = cols[2] || '';
+    }
 
-    const betType = cols[0] || ''; // 全场亚盘/大小球/角球等
-    const selection = cols[1] || ''; // 选项：主队+0.25等
-    const odds = cols[2] || ''; // 赔率区间
-    const valueLevel = valueText;
-    const position = cols[4] || '';
-
+    // 宽松识别：只要该行含有价值/推荐信号或投注类型关键词，就记录
+    const hasValueSignal = /高价值|中高价值|★★|推荐|✅/.test(valueText + ' ' + line);
+    const hasBetType = /亚盘|大小球|角球|让球|胜平负|大球|小球|主胜|客胜|平局/.test(betType + ' ' + selection + ' ' + line);
+    if (!hasValueSignal && !hasBetType) return;
     if (!betType || !selection) return;
+
+    // 过滤表头行
+    if (/盘口|类型|选项|建议|赔率/.test(betType) && /选项|方向|投注/.test(selection)) return;
 
     const id = `${matchId}_${betType}_${selection}_${date}`.replace(/\s+/g, '');
     records.push({
@@ -1410,9 +1442,9 @@ function parseBetAdvicesFromAI(aiContent, matchInfo, matchId, date) {
       betType,
       selection,
       odds,
-      valueLevel,
+      valueLevel: valueText || '推荐',
       position,
-      betResult: '',    // ✓ 命中 / ✗ 未中 / 空
+      betResult: '',
       actualScore: '',
       createdAt: Date.now()
     });
