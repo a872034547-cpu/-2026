@@ -521,10 +521,15 @@ async function runDeepAIPredict() {
       const steps = resp.steps || {};
       const stepNote = `量化模型 ${steps.quant ? '✅' : '⚠️未生成'} · 联网情报 ${steps.intel ? '✅' : '⚠️未检索到'}`;
       if (resp.quantMarkdown) appendChatMsg('assistant', resp.quantMarkdown, '📐 本地量化参考（确定性数学，供AI参考非照抄）');
-      if (resp.intel && resp.intel.ok) {
-        const srcLines = (resp.intel.gathered || []).slice(0, 6)
-          .map((r, i) => `${i + 1}. ${r.title} — ${r.url}`).join('\n');
-        appendChatMsg('assistant', srcLines || '（无来源）', '🌐 扩展端联网情报来源（仅供AI核实）');
+      if (resp.intel) {
+        const sourceLabel = resp.intel.source === 'tavily' ? '🟢 Tavily 实时搜索' : resp.intel.source === 'free' ? '⚪ 免费搜索引擎（Tavily降级）' : '❌ 未检索到情报';
+        const errNote = resp.intel.errors?.length ? `\n⚠️ 错误: ${resp.intel.errors.join('；')}` : '';
+        const srcLines = resp.intel.ok
+          ? (resp.intel.gathered || []).slice(0, 8).map((r, i) =>
+              `${i + 1}. **${r.title}**\n   摘要: ${(r.snippet || '').slice(0, 150)}\n   来源: ${r.url}`
+            ).join('\n')
+          : '（未获取到情报）';
+        appendChatMsg('assistant', srcLines + errNote, `🌐 扩展端联网情报 (${sourceLabel})`);
       }
       // AI 最终裁决
       chatHistory = [{ role: 'assistant', content: resp.prediction.content }];
