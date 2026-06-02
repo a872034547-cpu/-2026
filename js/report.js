@@ -279,11 +279,11 @@ export class ReportGenerator {
       // 历史变化记录
       if (asian.history?.length > 0) {
         sections.push('');
-        sections.push(`**盘口变化记录** (最近 ${Math.min(15, asian.history.length)} 条，主水低=主队被看好)`);
-        sections.push(`| 时间 | 盘口 | 主队水位 | 客队水位 |`);
-        sections.push(`|------|------|----------|----------|`);
-        asian.history.slice(0, 15).forEach(h => {
-          sections.push(`| ${h.time} | ${h.line} | ${h.v1} | ${h.v2} |`);
+        sections.push(`**盘口变化记录** (最近 ${Math.min(20, asian.history.length)} 条，主水低=主队被看好)`);
+        sections.push(`| 时间 | 公司 | 盘口 | 主水 | 客水 |`);
+        sections.push(`|------|------|------|------|------|`);
+        asian.history.slice(0, 20).forEach(h => {
+          sections.push(`| ${h.time} | ${h.company||'-'} | ${h.line} | ${h.v1} | ${h.v2} |`);
         });
       }
     } else {
@@ -322,11 +322,11 @@ export class ReportGenerator {
       // 历史变化记录
       if (overunder.history?.length > 0) {
         sections.push('');
-        sections.push(`**进球线变化记录** (最近 ${Math.min(15, overunder.history.length)} 条)`);
-        sections.push(`| 时间 | 盘口 | 大球水 | 小球水 |`);
-        sections.push(`|------|------|--------|--------|`);
-        overunder.history.slice(0, 15).forEach(h => {
-          sections.push(`| ${h.time} | ${h.line} | ${h.v1} | ${h.v2} |`);
+        sections.push(`**进球线变化记录** (最近 ${Math.min(20, overunder.history.length)} 条，大水低=大球被看好)`);
+        sections.push(`| 时间 | 公司 | 盘口 | 大水 | 小水 |`);
+        sections.push(`|------|------|------|------|------|`);
+        overunder.history.slice(0, 20).forEach(h => {
+          sections.push(`| ${h.time} | ${h.company||'-'} | ${h.line} | ${h.v1} | ${h.v2} |`);
         });
       }
     } else {

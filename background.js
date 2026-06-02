@@ -1423,29 +1423,50 @@ function extractPageData(dataType) {
     result.goalTimeDistribution.firstRows = rich.firstGoalTime.map(function(x) { return x.data; });
     result._debug.richTables = { goalDist: rich.goalDist.length, halfFull: rich.halfFull.length, singleDouble: rich.singleDouble.length, goalTime: rich.goalTime.length, firstGoalTime: rich.firstGoalTime.length };
 
-    // ---- 缺阵球员 ----
-    var injRe = /(\d{1,3})\s+\(([^)]+)\)\s+([^\n]{2,30})\n\s*([^\n]{2,30})/g;
-    var inj = [];
-    while ((rm = injRe.exec(text)) !== null) {
-      inj.push({ number:rm[1], position:rm[2], name:rm[3].trim(), reason:rm[4].trim() });
-    }
-    // 按队分配（前半给主队，后半给客队，用球队名分割）
-    var splitIdx = -1;
-    if (result.matchInfo.away) {
-      for (var i = 0; i < inj.length; i++) {
-        if (i > 0 && text.indexOf(result.matchInfo.away) < text.indexOf(result.matchInfo.home)) {
-          splitIdx = i; break;
+    // ---- 缺阵球员 ----（DOM解析，表格格式：球员 | 缺阵原因）
+    (function() {
+      var injTables = [];
+      document.querySelectorAll('table').forEach(function(tbl) {
+        var tt = tbl.textContent;
+        if (tt.indexOf('缺阵原因') >= 0 || tt.indexOf('球员') >= 0 && tt.indexOf('损伤') >= 0) {
+          injTables.push(tbl);
         }
+      });
+      var hName = result.matchInfo.home || '';
+      var aName = result.matchInfo.away || '';
+      injTables.forEach(function(tbl) {
+        // 判断该表属于主队还是客队
+        var ctx = '';
+        var node = tbl.previousElementSibling;
+        for (var s = 0; node && s < 5; s++, node = node.previousElementSibling) ctx += ' ' + node.textContent;
+        var side = '';
+        if (hName && ctx.indexOf(hName) >= 0 && (!aName || ctx.indexOf(aName) < 0)) side = 'home';
+        else if (aName && ctx.indexOf(aName) >= 0 && (!hName || ctx.indexOf(hName) < 0)) side = 'away';
+        if (!side) return;
+        tbl.querySelectorAll('tr').forEach(function(row) {
+          var tds = row.querySelectorAll('td');
+          if (tds.length < 2) return;
+          // 格式1: "6 (中卫) 球员名" | "缺阵原因"
+          var cell0 = tds[0].textContent.trim();
+          var cell1 = tds[1].textContent.trim();
+          var m2 = cell0.match(/^(\d{1,3})\s+\(([^)]+)\)\s+(.{2,20})$/);
+          if (m2 && cell1 && cell1.length >= 2 && cell1 !== '缺阵原因') {
+            result.injuries[side].push({ number: m2[1], position: m2[2], name: m2[3].trim(), reason: cell1 });
+          }
+        });
+      });
+      // 若DOM方式失败，用文本正则兜底（同行格式：数字 (位置) 姓名\t原因）
+      if (result.injuries.home.length === 0 && result.injuries.away.length === 0) {
+        var injRe = /(\d{1,3})\s+\(([^)]+)\)\s+([^\t\n]{2,25})[\t ]+([^\n]{2,30})/g;
+        var inj = [];
+        while ((rm = injRe.exec(text)) !== null) {
+          inj.push({ number:rm[1], position:rm[2], name:rm[3].trim(), reason:rm[4].trim() });
+        }
+        var half = Math.ceil(inj.length / 2);
+        result.injuries.home = inj.slice(0, half);
+        result.injuries.away = inj.slice(half);
       }
-    }
-    if (splitIdx > 0) {
-      result.injuries.home = inj.slice(0, splitIdx);
-      result.injuries.away = inj.slice(splitIdx);
-    } else {
-      var half = Math.ceil(inj.length / 2);
-      result.injuries.home = inj.slice(0, half);
-      result.injuries.away = inj.slice(half);
-    }
+    })();
 
     // ---- 近10场平均评分 ----
     var homeScoresM = text.match(/主队近10场平均评分:([\s\S]{0,300}?)客队近10场/);
@@ -2284,18 +2305,64 @@ function extractPageData(dataType) {
   // ===================== 历史变化时间线 =====================
   function extractHistory(text, type) {
     const history = [];
-    // 格式：5-7 09:01\n盘口名\n水位 水位  或  5-7 09:01\n进球线\n水位 水位
-    const timeRe = /(\d{1,2}-\d{1,2}\s+\d{2}:\d{2})\s*\n\s*([^\n]{2,30})\s*\n\s*([\d.]+)\s+([\d.]+)/g;
-    let m;
-    let count = 0;
-    while ((m = timeRe.exec(text)) !== null && count < 50) {
-      history.push({
-        time: m[1].trim(),
-        line: m[2].trim(),
-        v1: m[3],
-        v2: m[4]
-      });
-      count++;
+    // 历史变化表格结构：多列（各公司），每数据行只有一个TD有内容（"盘口 水位1 水位2"），最后列是时间
+    // 无法用文本正则跨行匹配，改用DOM遍历
+    var WATER_RE2 = /^[01]\.\d{2}$/;
+    var TIME_RE2 = /^\d{1,2}-\d{1,2}\s+\d{2}:\d{2}$/;
+
+    var tables = document.querySelectorAll('table');
+    for (var ti = 0; ti < tables.length; ti++) {
+      var tbl = tables[ti];
+      var rows = tbl.querySelectorAll('tr');
+      if (rows.length < 5) continue;
+
+      // 检查是否含时间列（历史变化表特征）
+      var hasTime = false;
+      for (var ri = 0; ri < rows.length; ri++) {
+        var lastTd = rows[ri].querySelectorAll('td');
+        if (!lastTd.length) continue;
+        var lastText = lastTd[lastTd.length - 1].textContent.trim();
+        if (TIME_RE2.test(lastText)) { hasTime = true; break; }
+      }
+      if (!hasTime) continue;
+
+      // 解析表头（公司名）
+      var headers = [];
+      var headerRow = tbl.querySelector('tr');
+      if (headerRow) {
+        var hCells = headerRow.querySelectorAll('td,th');
+        for (var hi = 0; hi < hCells.length; hi++) {
+          headers.push(hCells[hi].textContent.trim().replace(/[*★\s]/g, ''));
+        }
+      }
+
+      // 解析每行
+      for (var ri2 = 0; ri2 < rows.length && history.length < 50; ri2++) {
+        var tds = rows[ri2].querySelectorAll('td');
+        if (tds.length < 2) continue;
+        var lastTdText = tds[tds.length - 1].textContent.trim();
+        if (!TIME_RE2.test(lastTdText)) continue;
+        var time = lastTdText;
+        // 找含水位的TD
+        for (var ci = 0; ci < tds.length - 1; ci++) {
+          var cellText = tds[ci].textContent.trim();
+          if (!cellText) continue;
+          var parts = cellText.split(/\s+/).filter(Boolean);
+          var waters = parts.filter(function(p) { return WATER_RE2.test(p); });
+          if (waters.length >= 2) {
+            var lineParts = parts.filter(function(p) { return !WATER_RE2.test(p); });
+            history.push({
+              time: time,
+              company: headers[ci] || '',
+              line: lineParts.join(' ') || cellText,
+              v1: waters[0],
+              v2: waters[1]
+            });
+            break;
+          }
+        }
+      }
+      if (history.length > 0) break; // 只取第一个匹配的历史表
     }
     return history;
   }
