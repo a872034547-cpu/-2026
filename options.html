@@ -304,6 +304,41 @@
     </div>
   </div>
 
+  <!-- 公共数据同步配置 -->
+  <div class="section">
+    <div class="section-title">☁️ 公共数据同步（PHP + MySQL）</div>
+
+    <div class="toggle-group">
+      <div class="toggle-info">
+        <div class="toggle-title">启用公共数据同步</div>
+        <div class="toggle-desc">普通用户只读公共采集数据和官方战绩；管理员可上传和维护</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="publicSyncEnabled">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="form-group" style="margin-top:14px">
+      <label>公共 API 地址 <span class="label-hint">例如 https://你的域名/football-api/api.php</span></label>
+      <input type="text" id="publicApiUrl" placeholder="http://cdu.cc.cd/football-api/api.php" />
+    </div>
+
+    <div class="form-group">
+      <label>管理员密钥 <span class="label-hint">只有你本人填写；普通用户留空即只读</span></label>
+      <div class="key-display">
+        <input type="password" id="publicAdminKey" placeholder="ADMIN_API_KEY（普通用户不要填写）" />
+        <button class="eye-btn" id="publicAdminEyeBtn" title="显示/隐藏">👁</button>
+      </div>
+    </div>
+
+    <div class="model-hint">
+      💡 服务端只保存两类公共数据：<strong>采集数据</strong> 和 <strong>官方战绩</strong>。
+      <br>管理员密钥正确时，插件会上传公共采集数据并可发布/验证/删除官方战绩。
+      <br>普通用户不填密钥，只能读取官方数据；自己运行 AI 的结果会保存在本机，不会改你的官方战绩。
+    </div>
+  </div>
+
   <!-- 监控配置 -->
   <div class="section">
     <div class="section-title">📡 监控配置</div>

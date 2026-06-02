@@ -3,6 +3,7 @@
 const KEYS = [
   'aiProvider', 'aiApiKey', 'aiModel', 'aiCustomEndpoint',
   'tavilyApiKey',
+  'publicSyncEnabled', 'publicApiUrl', 'publicAdminKey',
   'defaultInterval', 'sensitivity',
   'notifyOddsChange', 'autoReport', 'autoPreMatch',
   'srcAnalysis', 'srcAsian', 'srcOverUnder', 'srcCorner',
@@ -26,6 +27,11 @@ async function loadSettings() {
   setVal('aiModel', settings.aiModel || '');
   setVal('customEndpoint', settings.aiCustomEndpoint || '');
   setVal('tavilyApiKey', settings.tavilyApiKey || '');
+
+  // 公共数据同步
+  setCheck('publicSyncEnabled', !!settings.publicSyncEnabled);
+  setVal('publicApiUrl', settings.publicApiUrl || 'http://cdu.cc.cd/football-api/api.php');
+  setVal('publicAdminKey', settings.publicAdminKey || '');
 
   // 监控配置
   setVal('defaultInterval', settings.defaultInterval || '2');
@@ -96,6 +102,13 @@ function initEyeBtn() {
     tavilyInput.type = tavilyInput.type === 'password' ? 'text' : 'password';
     tavilyBtn.textContent = tavilyInput.type === 'password' ? '👁' : '🙈';
   });
+
+  const publicAdminBtn = document.getElementById('publicAdminEyeBtn');
+  const publicAdminInput = document.getElementById('publicAdminKey');
+  publicAdminBtn?.addEventListener('click', () => {
+    publicAdminInput.type = publicAdminInput.type === 'password' ? 'text' : 'password';
+    publicAdminBtn.textContent = publicAdminInput.type === 'password' ? '👁' : '🙈';
+  });
 }
 
 function initButtons() {
@@ -120,12 +133,22 @@ async function saveSettings() {
     }
   }
 
+  const publicSyncEnabled = getCheck('publicSyncEnabled');
+  const publicApiUrl = getVal('publicApiUrl').trim();
+  if (publicSyncEnabled && !/^https?:\/\//i.test(publicApiUrl)) {
+    showToast('公共 API 地址必须以 http:// 或 https:// 开头', true);
+    return;
+  }
+
   const settings = {
     aiProvider: provider,
     aiApiKey: apiKey,
     aiModel: getVal('aiModel').trim(),
     aiCustomEndpoint: getVal('customEndpoint').trim(),
     tavilyApiKey: getVal('tavilyApiKey').trim(),
+    publicSyncEnabled,
+    publicApiUrl,
+    publicAdminKey: getVal('publicAdminKey').trim(),
     defaultInterval: getVal('defaultInterval'),
     sensitivity: getVal('sensitivity'),
     notifyOddsChange: getCheck('notifyOddsChange'),
@@ -160,7 +183,12 @@ async function clearCacheData() {
 async function exportConfig() {
   const settings = await chrome.storage.sync.get(KEYS);
   // 脱敏处理
-  const exported = { ...settings, aiApiKey: settings.aiApiKey ? '***已隐藏***' : '' };
+  const exported = {
+    ...settings,
+    aiApiKey: settings.aiApiKey ? '***已隐藏***' : '',
+    tavilyApiKey: settings.tavilyApiKey ? '***已隐藏***' : '',
+    publicAdminKey: settings.publicAdminKey ? '***已隐藏***' : ''
+  };
   const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

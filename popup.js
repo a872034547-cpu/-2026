@@ -79,6 +79,17 @@ async function initializeApp() {
   initButtons();
   await loadMonitorList();
 
+  // 管理员才显示同步按钮
+  try {
+    const perm = await sendMsg({ type: 'GET_BET_RECORDS' });
+    if (perm?.isAdmin) {
+      const syncBtn = document.getElementById('syncServerBtn');
+      if (syncBtn) syncBtn.style.display = 'inline-flex';
+      const uploadBtn = document.getElementById('uploadLocalRecordsBtn');
+      if (uploadBtn) uploadBtn.style.display = 'inline-flex';
+    }
+  } catch (e) { /* 非关键，忽略 */ }
+
   // 从 storage 恢复上次使用的 matchId
   const saved = await chrome.storage.local.get('lastMatchId');
   if (saved.lastMatchId) {
@@ -131,6 +142,8 @@ function initButtons() {
   document.getElementById('stopCollectBtn').addEventListener('click', () => { collectAborted = true; showAlert('正在停止采集...', 'info', 2000); });
   document.getElementById('collectSelectedBtn').addEventListener('click', collectSelected);
   document.getElementById('batchAIBtn').addEventListener('click', runBatchAI);
+  document.getElementById('syncServerBtn')?.addEventListener('click', () => syncAllToServer('syncServerBtn'));
+  document.getElementById('uploadLocalRecordsBtn')?.addEventListener('click', () => syncAllToServer('uploadLocalRecordsBtn'));
   document.getElementById('dailyFilterTier').addEventListener('change', renderDailyList);
   // 复选框事件委托
   document.getElementById('dailyMatchList').addEventListener('change', (e) => {
@@ -234,6 +247,26 @@ async function startMonitor() {
     switchTab('monitor');
   } else {
     showAlert(`启动失败: ${resp.error}`, 'error');
+  }
+}
+
+// ===== 管理员一键全量同步到服务器（本地战绩 + 本地比赛数据） =====
+async function syncAllToServer(btnId) {
+  const btn = document.getElementById(btnId || 'syncServerBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '☁️ 同步中...'; }
+  try {
+    const resp = await sendMsg({ type: 'SYNC_ALL_TO_SERVER' });
+    if (resp?.ok) {
+      showAlert(`✅ ${resp.message || '同步完成'}`, 'success', 5000);
+      // 刷新战绩显示
+      await loadDailyRecords();
+    } else {
+      showAlert(`☁️ 同步失败：${resp?.error || '未知错误'}`, 'error', 5000);
+    }
+  } catch (e) {
+    showAlert(`☁️ 同步出错：${e.message}`, 'error', 5000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn.id === 'uploadLocalRecordsBtn' ? '☁️ 上传本地' : '☁️ 同步'; }
   }
 }
 
@@ -959,24 +992,47 @@ async function fetchTodayMatches() {
     // 过滤已结束比赛（有比分且状态为finished），这些场次无需采集盘口
     const allMatches = resp.matches;
     const finishedMatches = allMatches.filter(m => m.status === 'finished' || (m.score && /^\d+[-:]\d+$/.test(m.score.trim())));
-    const upcomingMatches = allMatches.filter(m => !finishedMatches.includes(m));
     todayMatchItems = allMatches.map(m => ({ match: m, matchData: null, profitability: null, checked: false }));
 
     const finishedTip = finishedMatches.length > 0
       ? `（已过滤 ${finishedMatches.length} 场已结束比赛，仅显示未开场/进行中）`
       : '';
-    showAlert(`✅ 获取到 ${allMatches.length} 场比赛${finishedTip}，可勾选后点"采集选中"，或等待自动采集...`, 'success', 6000);
+    showAlert(`✅ 获取到 ${allMatches.length} 场比赛${finishedTip}，正在从服务器加载已采集数据...`, 'info', 6000);
     renderDailyList();
     switchTab('daily');
     document.getElementById('collectSelectedBtn').style.display = 'inline-flex';
 
-    // 逐场自动采集盘口数据（跳过已结束比赛）
+    // 先批量从服务器加载已有数据，减少重复采集
+    let serverLoadedCount = 0;
+    try {
+      const pubResp = await sendMsg({ type: 'LOAD_PUBLIC_MATCH_LIST' });
+      if (pubResp?.ok && pubResp.serverEnabled && pubResp.matchIds?.length) {
+        const serverIdSet = new Set(pubResp.matchIds.map(String));
+        for (const item of todayMatchItems) {
+          if (serverIdSet.has(String(item.match.id))) {
+            // 从服务器拉取完整数据并缓存到 item.matchData
+            const loadResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id, preferServer: true });
+            if (loadResp?.ok && loadResp.data) {
+              item.matchData = loadResp.data;
+              item.profitability = loadResp.profitability;
+              serverLoadedCount++;
+            }
+          }
+        }
+        if (serverLoadedCount > 0) {
+          showAlert(`☁️ 已从服务器加载 ${serverLoadedCount} 场数据`, 'success', 3000);
+          renderDailyList();
+        }
+      }
+    } catch (e) { /* 服务器加载失败不阻断本地采集 */ }
+
+    // 逐场自动采集盘口数据（跳过已结束或已从服务器加载的比赛）
     let doneCount = 0;
     let skippedFinished = 0;
     for (let i = 0; i < todayMatchItems.length; i++) {
       if (collectAborted) break;
       const item = todayMatchItems[i];
-      if (item.matchData) continue; // 已采集跳过
+      if (item.matchData) continue; // 已采集或已从服务器加载，跳过
       // 跳过已结束比赛，无需采集盘口
       if (item.match.status === 'finished' || (item.match.score && /^\d+[-:]\d+$/.test(item.match.score.trim()))) {
         skippedFinished++;
@@ -995,7 +1051,10 @@ async function fetchTodayMatches() {
     }
     document.getElementById('batchAIBtn').disabled = false;
     const skipNote = skippedFinished > 0 ? `，跳过 ${skippedFinished} 场已结束` : '';
-    showAlert(collectAborted ? `⏹ 已停止，完成 ${doneCount} 场采集` : `✅ 采集完成：${doneCount} 场${skipNote}`, 'success', 4000);
+    const serverNote = serverLoadedCount > 0 ? `，☁️ 服务器 ${serverLoadedCount} 场` : '';
+    showAlert(collectAborted
+      ? `⏹ 已停止，完成 ${doneCount} 场采集${serverNote}`
+      : `✅ 采集完成：${doneCount} 场新采集${serverNote}${skipNote}`, 'success', 4000);
   } catch (e) {
     showAlert(`采集失败: ${e.message}`, 'error');
   } finally {
@@ -1171,6 +1230,8 @@ async function runBatchAI() {
   const allAdvices = [];
   let allContent = '';
   let doneCount = 0;
+  let officialBetSaveCount = 0;
+  let privateBetSaveCount = 0;
 
   try {
     for (let i = 0; i < targetItems.length; i++) {
@@ -1194,8 +1255,10 @@ async function runBatchAI() {
           // 解析高价值/中高价值投注建议
           const betRecs = parseBetAdvicesFromAI(resp.prediction.content, m, m.id, today);
           if (betRecs.length) {
-            await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
-            console.log(`[Bet] ${m.home}vs${m.away} 提取到 ${betRecs.length} 条高价值建议`);
+            const saveResp = await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
+            if (saveResp?.savedPrivate) privateBetSaveCount += betRecs.length;
+            else officialBetSaveCount += betRecs.length;
+            console.log(`[Bet] ${m.home}vs${m.away} 提取到 ${betRecs.length} 条高价值建议`, saveResp?.message || '');
           }
           doneCount++;
         } else if (resp.error) {
@@ -1231,9 +1294,14 @@ async function runBatchAI() {
     renderDailyList();
     // 自动刷新战绩Tab数据
     await loadDailyRecords();
+    const saveNote = privateBetSaveCount > 0
+      ? `，${privateBetSaveCount} 条推荐已保存为本地私有记录（不进入官方战绩）`
+      : officialBetSaveCount > 0
+        ? `，${officialBetSaveCount} 条推荐已发布到官方战绩`
+        : '';
     showAlert(collectAborted
-      ? `⏹ 已停止，完成 ${doneCount} 场AI分析`
-      : `✅ ${doneCount} 场AI详细分析完成，已同步到战绩`, 'success', 5000);
+      ? `⏹ 已停止，完成 ${doneCount} 场AI分析${saveNote}`
+      : `✅ ${doneCount} 场AI详细分析完成${saveNote}`, 'success', 6000);
   } catch (e) {
     showAlert(`AI分析出错: ${e.message}`, 'error');
   } finally {
@@ -1299,10 +1367,26 @@ function parseBetAdvicesFromAI(aiContent, matchInfo, matchId, date) {
 }
 
 let allBetRecords = [];
+let betRecordsMeta = {
+  publicSyncEnabled: false,
+  canManageOfficialRecords: true,
+  isAdmin: true,
+  mode: 'local',
+  offline: false,
+  error: ''
+};
 
 async function loadDailyRecords() {
   const resp = await sendMsg({ type: 'GET_BET_RECORDS' });
   allBetRecords = resp.records || [];
+  betRecordsMeta = {
+    publicSyncEnabled: !!resp.publicSyncEnabled,
+    canManageOfficialRecords: resp.canManageOfficialRecords !== false,
+    isAdmin: resp.isAdmin !== false,
+    mode: resp.mode || (resp.publicSyncEnabled ? 'official' : 'local'),
+    offline: !!resp.offline,
+    error: resp.error || ''
+  };
 
   // 更新日期筛选器
   const dateFilter = document.getElementById('recordsDateFilter');
@@ -1318,6 +1402,16 @@ function renderDailyRecords() {
   const statsEl = document.getElementById('recordsStats');
   const dateFilter = document.getElementById('recordsDateFilter').value;
   const resultFilter = document.getElementById('recordsResultFilter').value;
+  const canManage = betRecordsMeta.canManageOfficialRecords !== false;
+  const isOfficialMode = betRecordsMeta.publicSyncEnabled;
+  const modeText = isOfficialMode
+    ? (canManage ? '官方战绩 · 管理员可维护' : '官方战绩 · 普通用户只读')
+    : '本地兼容模式';
+  const verifyAllBtn = document.getElementById('verifyAllBtn');
+  if (verifyAllBtn) {
+    verifyAllBtn.disabled = !canManage;
+    verifyAllBtn.title = canManage ? '自动验证所有待验证官方记录' : '普通用户只能查看官方战绩';
+  }
 
   let records = allBetRecords;
   if (dateFilter) records = records.filter(r => r.date === dateFilter);
@@ -1337,6 +1431,10 @@ function renderDailyRecords() {
   const hitRate = verified > 0 ? ((hitEquiv / verified) * 100).toFixed(1) : '-';
 
   statsEl.innerHTML = `
+    <div style="background:${canManage ? '#16261a' : '#1f2633'};border:1px solid ${canManage ? '#238636' : '#1f6feb'};border-radius:6px;padding:6px 12px;font-size:11px">
+      <span style="color:#8b949e">模式</span><span style="color:${canManage ? '#3fb950' : '#58a6ff'};font-weight:700;margin-left:4px">${modeText}</span>
+    </div>
+    ${betRecordsMeta.offline ? `<div style="background:#2d1f12;border:1px solid #d29922;border-radius:6px;padding:6px 12px;font-size:11px;color:#d29922">离线缓存：${escapeHtml(betRecordsMeta.error || '公共 API 暂不可用')}</div>` : ''}
     <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:11px">
       <span style="color:#8b949e">总推荐</span><span style="color:#e6edf3;font-weight:700;margin-left:4px">${total}</span>
     </div>
@@ -1354,7 +1452,7 @@ function renderDailyRecords() {
     </div>`;
 
   if (!records.length) {
-    el.innerHTML = `<div class="empty-state"><div class="emoji">📈</div><p>暂无高价值投注记录<br>AI分析后自动提取高/中高价值建议</p></div>`;
+    el.innerHTML = `<div class="empty-state"><div class="emoji">📈</div><p>${isOfficialMode ? '暂无官方高价值投注记录' : '暂无高价值投注记录'}<br>${canManage ? 'AI分析后自动提取高/中高价值建议' : '普通用户只读官方战绩，自己的AI推荐保存在本地私有记录中'}</p></div>`;
     return;
   }
 
@@ -1383,8 +1481,8 @@ function renderDailyRecords() {
         <span>📅 ${date}</span>
         <div class="records-day-actions">
           <span style="font-size:10px;color:#8b949e">${dayRecs.length}条 命中${dayVerified > 0 ? (dayHit/dayVerified*100).toFixed(0)+'%' : '-'}</span>
-          <button class="btn btn-sm" style="font-size:10px;background:#2d1a1a;border:1px solid #f85149;color:#f85149;padding:2px 6px"
-            data-action="deleteByDate" data-date="${date}">🗑 删除当日</button>
+          ${canManage ? `<button class="btn btn-sm" style="font-size:10px;background:#2d1a1a;border:1px solid #f85149;color:#f85149;padding:2px 6px"
+            data-action="deleteByDate" data-date="${date}">🗑 删除当日</button>` : `<span style="font-size:10px;color:#58a6ff">只读</span>`}
         </div>
       </div>
       <div class="records-table-wrap">
@@ -1426,30 +1524,33 @@ function renderDailyRecords() {
         <td style="text-align:center"><span class="pill-text" style="color:${valueColor};font-size:10px;font-weight:600">${escapeHtml(rec.valueLevel)}</span></td>
         <td style="text-align:center">
           <input type="text" placeholder="比分" value="${escapeHtml(rec.actualScore||'')}"
-            id="score_${safeId}"
-            style="width:42px;max-width:100%;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#e6edf3;padding:2px 3px;font-size:10px;text-align:center">
+            id="score_${safeId}" ${canManage ? '' : 'disabled'}
+            style="width:42px;max-width:100%;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#e6edf3;padding:2px 3px;font-size:10px;text-align:center;${canManage ? '' : 'opacity:0.65'}">
         </td>
         <td style="text-align:center">
-          <select id="result_${safeId}"
-            style="width:42px;max-width:100%;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:${resultColor};font-size:10px;padding:1px">
+          <select id="result_${safeId}" ${canManage ? '' : 'disabled'}
+            style="width:42px;max-width:100%;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:${resultColor};font-size:10px;padding:1px;${canManage ? '' : 'opacity:0.65'}">
             <option value="">-</option>
             <option value="✓" ${rec.betResult==='✓'?'selected':''}>✓</option>
             <option value="✗" ${rec.betResult==='✗'?'selected':''}>✗</option>
+            <option value="◐" ${rec.betResult==='◐'?'selected':''}>◐</option>
+            <option value="◑" ${rec.betResult==='◑'?'selected':''}>◑</option>
+            <option value="➖" ${rec.betResult==='➖'?'selected':''}>➖</option>
           </select>
         </td>
         <td style="text-align:center">
           <div class="records-actions">
-            ${!rec.betResult ? `<button class="btn btn-sm" style="background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff"
+            ${canManage && !rec.betResult ? `<button class="btn btn-sm" style="background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff"
               data-action="verifyBetRecord" data-id="${escapeHtml(rec.id)}"
               data-match-id="${escapeHtml(rec.matchId)}"
               data-match-home="${escapeHtml(rec.matchHome||'')}"
               data-match-away="${escapeHtml(rec.matchAway||'')}"
               data-bet-type="${escapeHtml(rec.betType)}"
               data-selection="${escapeHtml(rec.selection)}">验</button>` : ''}
-            <button class="btn btn-sm" style="background:#21262d;border:1px solid #30363d;color:#8b949e"
+            ${canManage ? `<button class="btn btn-sm" style="background:#21262d;border:1px solid #30363d;color:#8b949e"
               data-action="saveBetResult" data-id="${escapeHtml(rec.id)}" data-safe="${safeId}">存</button>
             <button class="btn btn-sm" style="background:#2d1a1a;border:1px solid #f85149;color:#f85149"
-              data-action="deleteBetRecord" data-id="${escapeHtml(rec.id)}">删</button>
+              data-action="deleteBetRecord" data-id="${escapeHtml(rec.id)}">删</button>` : `<span style="font-size:10px;color:#58a6ff">官方只读</span>`}
           </div>
         </td>
       </tr>`;

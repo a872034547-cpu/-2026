@@ -620,6 +620,7 @@
   </select>
   <button class="btn btn-primary" id="startMonitorBtn">▶ 监控</button>
   <button class="btn btn-blue" id="fetchOnceBtn">⬇ 采集</button>
+  <button class="btn" id="syncServerBtn" style="display:none;background:#1f3a1f;border:1px solid #238636;color:#3fb950;font-size:11px" title="管理员：将当前比赛数据上传到公共服务器">☁️ 同步</button>
 </div>
 
 <div id="alertArea"></div>
@@ -662,6 +663,7 @@
     <div class="compact-toolbar">
       <button class="btn btn-sm" id="loadRecordsBtn" style="background:#21262d;border:1px solid #30363d;color:#8b949e">🔄 刷新</button>
       <button class="btn btn-sm" id="verifyAllBtn" style="background:#1f3a5a;border:1px solid #1f6feb;color:#58a6ff">⚡ 一键验证</button>
+      <button class="btn btn-sm" id="uploadLocalRecordsBtn" style="display:none;background:#1f3a1f;border:1px solid #238636;color:#3fb950" title="管理员：将本地战绩批量上传到服务器">☁️ 上传本地</button>
       <select id="recordsDateFilter" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">
         <option value="">全部日期</option>
       </select>
@@ -773,6 +775,55 @@
 
 </div>
 
+</div>
+
+<!-- 使用教程 -->
+<div style="background:#0d1117;border-top:1px solid #21262d;padding:14px 14px 10px;font-size:11px;color:#8b949e;line-height:1.7">
+  <div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">📖 快速使用教程</div>
+  <div style="margin-bottom:10px">
+    <div style="color:#e6edf3;font-weight:500;margin-bottom:3px">① 采集比赛数据</div>
+    <div>今日赛事 Tab → 勾选比赛 → 点击 <b style="color:#e6edf3">⬇ 采集选中</b>，等待标签页自动关闭即为成功。</div>
+  </div>
+  <div style="margin-bottom:10px">
+    <div style="color:#e6edf3;font-weight:500;margin-bottom:3px">② AI 分析</div>
+    <div>在比赛输入框填入 matchId（URL 中的数字）→ <b style="color:#e6edf3">⬇ 采集</b> → <b style="color:#e6edf3">🤖 AI 预测</b> 或 <b style="color:#e6edf3">🔬 深度</b>。也可在今日赛事批量点击 <b style="color:#e6edf3">🤖 批量AI</b>。</div>
+  </div>
+  <div style="margin-bottom:12px">
+    <div style="color:#e6edf3;font-weight:500;margin-bottom:3px">③ 读懂预测结果</div>
+    <table style="width:100%;border-collapse:collapse;font-size:10.5px">
+      <tr style="color:#58a6ff;border-bottom:1px solid #21262d">
+        <td style="padding:3px 4px">标记</td>
+        <td style="padding:3px 4px">含义</td>
+        <td style="padding:3px 4px">操作建议</td>
+      </tr>
+      <tr style="border-bottom:1px solid #161b22">
+        <td style="padding:3px 4px;color:#3fb950">★★★ 高信心</td>
+        <td style="padding:3px 4px">多维度信号一致</td>
+        <td style="padding:3px 4px">可重点关注</td>
+      </tr>
+      <tr style="border-bottom:1px solid #161b22">
+        <td style="padding:3px 4px;color:#d29922">★★ 中信心</td>
+        <td style="padding:3px 4px">部分信号吻合</td>
+        <td style="padding:3px 4px">谨慎参考</td>
+      </tr>
+      <tr style="border-bottom:1px solid #161b22">
+        <td style="padding:3px 4px;color:#f85149">💰 价值标记</td>
+        <td style="padding:3px 4px">模型概率 &gt; 赔率隐含概率</td>
+        <td style="padding:3px 4px">存在正期望</td>
+      </tr>
+      <tr style="border-bottom:1px solid #161b22">
+        <td style="padding:3px 4px;color:#a5d6ff">↑ 主让水涨</td>
+        <td style="padding:3px 4px">庄家看好主队</td>
+        <td style="padding:3px 4px">主队获利方向</td>
+      </tr>
+      <tr>
+        <td style="padding:3px 4px;color:#a5d6ff">↓ 主让水跌</td>
+        <td style="padding:3px 4px">资金流向客队</td>
+        <td style="padding:3px 4px">客队获利方向</td>
+      </tr>
+    </table>
+  </div>
+  <div style="color:#484f58;font-size:10px">⚙️ AI 设置：右上角齿轮 → 填入 API Key → 保存。战绩统计在「战绩」Tab 查看。</div>
 </div>
 
 <script src="popup.js"></script>

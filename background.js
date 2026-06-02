@@ -11,6 +11,9 @@ const predictor = new Predictor();
 const reportGen = new ReportGenerator();
 const aiClient = new AIClient();
 
+const PUBLIC_SYNC_KEYS = ['publicSyncEnabled', 'publicApiUrl', 'publicAdminKey'];
+const OFFICIAL_RECORD_LIMIT = 1000;
+
 let monitorTasks = {};
 let panelWindowId = null; // 固定面板窗口ID
 
@@ -264,10 +267,91 @@ async function handleMessage(msg, sender, sendResponse) {
         break;
       }
 
+      case 'SYNC_ALL_TO_SERVER': {
+        // 管理员一键全量同步：本地所有战绩 + 本地缓存的所有比赛数据
+        try {
+          const settings = await getPublicSyncSettings();
+          if (!settings.enabled) { sendResponse({ ok: false, error: '公共同步未启用' }); break; }
+          if (!settings.isAdmin) { sendResponse({ ok: false, error: '仅管理员可同步' }); break; }
+
+          // 1. 上传本地战绩（bet_records）
+          const rRec = await chrome.storage.local.get('bet_records');
+          const localRecords = rRec.bet_records || [];
+          let recordCount = 0;
+          if (localRecords.length > 0) {
+            const officialRecords = localRecords.map(r => ({ ...r, official: true }));
+            await publicApi('record.upsert', {
+              settings,
+              requireAdmin: true,
+              method: 'POST',
+              body: { records: officialRecords }
+            });
+            recordCount = officialRecords.length;
+          }
+
+          // 2. 上传所有本地缓存的比赛数据（match_* 键）
+          const allLocal = await chrome.storage.local.get(null);
+          const matchKeys = Object.keys(allLocal).filter(k => k.startsWith('match_'));
+          let matchCount = 0;
+          for (const key of matchKeys) {
+            const entry = allLocal[key];
+            if (!entry || !entry.matchId || !entry.data) continue;
+            try {
+              await publicApi('match.upsert', {
+                settings,
+                requireAdmin: true,
+                method: 'POST',
+                body: { matchId: entry.matchId, data: entry.data }
+              });
+              matchCount++;
+            } catch (e2) { /* 单场失败不阻断 */ }
+          }
+
+          sendResponse({
+            ok: true,
+            recordCount,
+            matchCount,
+            message: `同步完成：${recordCount} 条战绩 + ${matchCount} 场比赛数据已上传到服务器`
+          });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
+        }
+        break;
+      }
+
+      case 'LOAD_PUBLIC_MATCH_LIST': {
+        // 批量加载服务器上已采集的公共比赛数据列表（不含完整 data_json，仅 matchId 列表）
+        try {
+          const settings = await getPublicSyncSettings();
+          if (!settings.enabled) { sendResponse({ ok: false, serverEnabled: false, matchIds: [] }); break; }
+          const resp = await fetch(buildPublicApiUrl(settings.apiUrl, 'match.list', { includeData: '0', limit: '1000' }));
+          if (!resp.ok) { sendResponse({ ok: false, error: resp.status, matchIds: [] }); break; }
+          const json = await resp.json();
+          const matchIds = (json.matches || []).map(m => m.matchId);
+          sendResponse({ ok: true, serverEnabled: true, matchIds });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message, matchIds: [] });
+        }
+        break;
+      }
+
       case 'FETCH_MATCH_QUICK_DATA': {
         // 快速采集单场比赛核心数据：analysis 富统计 + 亚盘 + 欧赔 + 大小球
-        const { matchId } = msg;
+        // preferServer=true 时优先从服务器加载，服务器无数据再打开标签页采集
+        const { matchId, preferServer } = msg;
         try {
+          // 优先从服务器加载
+          if (preferServer) {
+            const serverEntry = await loadPublicMatchData(matchId);
+            if (serverEntry && serverEntry.data) {
+              const data = serverEntry.data;
+              const profitability = calcProfitabilityScore(data);
+              // 写入本地缓存
+              await chrome.storage.local.set({ [`match_${matchId}`]: serverEntry });
+              sendResponse({ ok: true, data, profitability, source: 'server' });
+              break;
+            }
+          }
           const sources = [
             { type: 'analysis',   url: `https://zq.titan007.com/analysis/${matchId}cn.htm` },
             { type: 'winDrawWin', url: `https://1x2.titan007.com/oddslist/${matchId}.htm` },
@@ -285,8 +369,9 @@ async function handleMessage(msg, sender, sendResponse) {
             data.winDrawWin = finalizeWinDrawWin(data.winDrawWin);
           }
           if (data.analysis?.recentStats) data.recentStats = data.analysis.recentStats;
+          await storeData(matchId, data);
           const profitability = calcProfitabilityScore(data);
-          sendResponse({ ok: true, data, profitability });
+          sendResponse({ ok: true, data, profitability, source: 'live' });
         } catch (e) {
           sendResponse({ ok: false, error: e.message });
         }
@@ -300,78 +385,50 @@ async function handleMessage(msg, sender, sendResponse) {
       }
 
       case 'GET_BET_RECORDS': {
-        // 获取投注记录（高价值/中高价值自动提取的结构化记录）
-        const r = await chrome.storage.local.get('bet_records');
-        sendResponse({ ok: true, records: r.bet_records || [] });
+        // 战绩Tab展示官方记录：公共同步开启时从 PHP 服务端读取；未开启时兼容旧本地模式。
+        const result = await getOfficialBetRecords();
+        sendResponse(result);
         break;
       }
 
       case 'SAVE_BET_RECORDS': {
-        // 保存结构化投注记录（自动提取的高/中高价值）
-        const { betRecords } = msg;
-        const r = await chrome.storage.local.get('bet_records');
-        const existing = r.bet_records || [];
-        // 合并新记录（按 id 去重）
-        const newIds = new Set(betRecords.map(b => b.id));
-        const merged = [...betRecords, ...existing.filter(b => !newIds.has(b.id))];
-        // 最多保留500条
-        while (merged.length > 500) merged.pop();
-        await chrome.storage.local.set({ bet_records: merged });
-        sendResponse({ ok: true, count: betRecords.length });
+        // 管理员：发布为官方战绩；普通用户：保存为本地私有记录，不进入官方战绩。
+        const result = await saveBetRecordsByRole(msg.betRecords || []);
+        sendResponse(result);
         break;
       }
 
       case 'UPDATE_BET_RECORD': {
-        // 更新单条投注记录的验证结果
         const { id, actualScore, betResult } = msg;
-        const r = await chrome.storage.local.get('bet_records');
-        const records = r.bet_records || [];
-        const rec = records.find(x => x.id === id);
-        if (rec) {
-          if (actualScore !== undefined) rec.actualScore = actualScore;
-          if (betResult !== undefined) rec.betResult = betResult;
-        }
-        await chrome.storage.local.set({ bet_records: records });
-        sendResponse({ ok: true });
+        const result = await updateOfficialBetRecordByRole(id, { actualScore, betResult });
+        sendResponse(result);
         break;
       }
 
       case 'DELETE_BET_RECORD': {
-        // 删除单条投注记录
-        const { id } = msg;
-        const r = await chrome.storage.local.get('bet_records');
-        const records = (r.bet_records || []).filter(x => x.id !== id);
-        await chrome.storage.local.set({ bet_records: records });
-        sendResponse({ ok: true });
+        const result = await deleteOfficialBetRecordByRole(msg.id);
+        sendResponse(result);
         break;
       }
 
       case 'DELETE_BET_RECORDS_BY_DATE': {
-        // 按日期删除一批记录
-        const { date } = msg;
-        const r = await chrome.storage.local.get('bet_records');
-        const records = (r.bet_records || []).filter(x => x.date !== date);
-        await chrome.storage.local.set({ bet_records: records });
-        sendResponse({ ok: true });
+        const result = await deleteOfficialBetRecordsByDateByRole(msg.date);
+        sendResponse(result);
         break;
       }
 
       case 'VERIFY_BET_RECORD': {
-        // 自动采集赛果比分，判断投注是否命中
-        const { matchId: vMatchId, betType, selection, matchHome: vMatchHome, matchAway: vMatchAway } = msg;
+        // 自动采集赛果比分，判断官方投注是否命中；公共同步普通用户只读，不能写回。
+        const { id: recordId, matchId: vMatchId, betType, selection, matchHome: vMatchHome, matchAway: vMatchAway } = msg;
         try {
+          const permission = await officialRecordPermission();
+          if (!permission.canManage) {
+            sendResponse({ ok: false, error: permission.reason || '普通用户只能查看官方战绩，不能验证或修改' });
+            break;
+          }
           const verifyRes = await verifyBetRecord(vMatchId, betType, selection, vMatchHome, vMatchAway);
-          // 命中/未中/半赢半输 时自动保存
           if (verifyRes.betResult) {
-            const r2 = await chrome.storage.local.get('bet_records');
-            const recs = r2.bet_records || [];
-            const rec = recs.find(x => x.matchId === vMatchId &&
-              x.betType === betType && x.selection === selection);
-            if (rec) {
-              rec.actualScore = verifyRes.score;
-              rec.betResult = verifyRes.betResult;
-              await chrome.storage.local.set({ bet_records: recs });
-            }
+            await saveVerifiedBetResult(recordId, vMatchId, betType, selection, verifyRes);
           }
           sendResponse({ ok: true, ...verifyRes });
         } catch (e) {
@@ -3122,13 +3179,316 @@ function notifyChanges(matchId, changes, data) {
   });
 }
 
+// ===== 公共 PHP + MySQL 同步网关 =====
+async function getPublicSyncSettings() {
+  const s = await chrome.storage.sync.get(PUBLIC_SYNC_KEYS);
+  // 优先用已保存的 apiUrl，否则用默认地址
+  const DEFAULT_API_URL = 'http://cdu.cc.cd/football-api/api.php';
+  const apiUrl = String(s.publicApiUrl || DEFAULT_API_URL).trim();
+  const adminKey = String(s.publicAdminKey || '').trim();
+  const hasValidUrl = /^https?:\/\//i.test(apiUrl);
+  // publicSyncEnabled 未明确保存时（undefined），只要 apiUrl 有效就默认启用
+  const enabled = (s.publicSyncEnabled === undefined ? hasValidUrl : !!s.publicSyncEnabled) && hasValidUrl;
+  return {
+    enabled,
+    apiUrl,
+    adminKey,
+    isAdmin: enabled && !!adminKey
+  };
+}
+
+function buildPublicApiUrl(apiUrl, action, params = {}) {
+  const url = new URL(apiUrl);
+  url.searchParams.set('action', action);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+  });
+  return url.toString();
+}
+
+async function publicApi(action, options = {}) {
+  const settings = options.settings || await getPublicSyncSettings();
+  if (!settings.enabled) throw new Error('公共数据同步未启用或 API 地址无效');
+  if (options.requireAdmin && !settings.isAdmin) throw new Error('普通用户只读：缺少管理员密钥');
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (settings.adminKey) {
+    headers.Authorization = `Bearer ${settings.adminKey}`;
+    headers['X-Api-Key'] = settings.adminKey;
+  }
+
+  let fetchUrl = buildPublicApiUrl(settings.apiUrl, action, options.params);
+  let resp;
+  try {
+    resp = await fetch(fetchUrl, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body)
+    });
+  } catch (fetchErr) {
+    // https 失败时自动降级 http 重试一次
+    if (fetchUrl.startsWith('https://')) {
+      fetchUrl = fetchUrl.replace(/^https:\/\//, 'http://');
+      resp = await fetch(fetchUrl, {
+        method: options.method || 'GET',
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body)
+      });
+    } else {
+      throw fetchErr;
+    }
+  }
+
+  let json = null;
+  try { json = await resp.json(); } catch (_) {}
+  if (!resp.ok || json?.ok === false) {
+    const msg = json?.error || `公共 API 请求失败（HTTP ${resp.status}）`;
+    const err = new Error(msg);
+    err.status = resp.status;
+    err.response = json;
+    throw err;
+  }
+  return json || { ok: true };
+}
+
+async function uploadPublicMatchDataIfAdmin(matchId, data) {
+  const settings = await getPublicSyncSettings();
+  if (!settings.enabled || !settings.isAdmin) return false;
+  try {
+    await publicApi('match.upsert', {
+      settings,
+      requireAdmin: true,
+      method: 'POST',
+      body: { matchId, data }
+    });
+    return true;
+  } catch (e) {
+    console.warn('[BG] 公共比赛数据上传失败:', e.message);
+    return false;
+  }
+}
+
+async function loadPublicMatchData(matchId) {
+  const settings = await getPublicSyncSettings();
+  if (!settings.enabled || !matchId) return null;
+  try {
+    const resp = await publicApi('match.get', { settings, params: { matchId } });
+    const m = resp.match;
+    if (!m?.data) return null;
+    return {
+      matchId: String(m.matchId || matchId),
+      fetchTime: m.updatedAt ? Date.parse(m.updatedAt) || Date.now() : Date.now(),
+      data: m.data,
+      public: true,
+      serverUpdatedAt: m.updatedAt || ''
+    };
+  } catch (e) {
+    if (e.status !== 404) console.warn('[BG] 公共比赛数据读取失败:', e.message);
+    return null;
+  }
+}
+
+async function officialRecordPermission() {
+  const settings = await getPublicSyncSettings();
+  if (!settings.enabled) {
+    return { publicSyncEnabled: false, canManage: true, isAdmin: true, mode: 'local' };
+  }
+  if (settings.isAdmin) {
+    return { publicSyncEnabled: true, canManage: true, isAdmin: true, mode: 'official', settings };
+  }
+  return {
+    publicSyncEnabled: true,
+    canManage: false,
+    isAdmin: false,
+    mode: 'official',
+    settings,
+    reason: '普通用户只能查看官方战绩；自己的 AI 推荐会保存为本地私有记录，不会发布到官方战绩'
+  };
+}
+
+async function getOfficialBetRecords() {
+  const permission = await officialRecordPermission();
+  if (!permission.publicSyncEnabled) {
+    const r = await chrome.storage.local.get('bet_records');
+    return {
+      ok: true,
+      records: r.bet_records || [],
+      publicSyncEnabled: false,
+      canManageOfficialRecords: true,
+      isAdmin: true,
+      mode: 'local'
+    };
+  }
+
+  try {
+    const resp = await publicApi('record.list', {
+      settings: permission.settings,
+      params: { limit: OFFICIAL_RECORD_LIMIT }
+    });
+    const records = (resp.records || []).map(r => ({ ...r, official: true }));
+    await chrome.storage.local.set({ official_bet_records_cache: records });
+    return {
+      ok: true,
+      records,
+      publicSyncEnabled: true,
+      canManageOfficialRecords: permission.canManage,
+      isAdmin: permission.isAdmin,
+      mode: 'official'
+    };
+  } catch (e) {
+    const cache = await chrome.storage.local.get('official_bet_records_cache');
+    return {
+      ok: true,
+      records: cache.official_bet_records_cache || [],
+      publicSyncEnabled: true,
+      canManageOfficialRecords: permission.canManage,
+      isAdmin: permission.isAdmin,
+      mode: 'official',
+      offline: true,
+      error: e.message
+    };
+  }
+}
+
+async function saveRecordsToLocalKey(storageKey, betRecords) {
+  const r = await chrome.storage.local.get(storageKey);
+  const existing = r[storageKey] || [];
+  const newIds = new Set(betRecords.map(b => b.id));
+  const merged = [...betRecords, ...existing.filter(b => !newIds.has(b.id))];
+  while (merged.length > 500) merged.pop();
+  await chrome.storage.local.set({ [storageKey]: merged });
+  return merged;
+}
+
+async function saveBetRecordsByRole(betRecords) {
+  betRecords = Array.isArray(betRecords) ? betRecords : [];
+  if (!betRecords.length) return { ok: true, count: 0 };
+
+  const permission = await officialRecordPermission();
+  if (!permission.publicSyncEnabled) {
+    await saveRecordsToLocalKey('bet_records', betRecords);
+    return { ok: true, count: betRecords.length, mode: 'local', canManageOfficialRecords: true };
+  }
+
+  if (!permission.canManage) {
+    const privateRecords = betRecords.map(r => ({ ...r, official: false, private: true }));
+    await saveRecordsToLocalKey('private_bet_records', privateRecords);
+    return {
+      ok: true,
+      count: betRecords.length,
+      savedPrivate: true,
+      mode: 'private',
+      canManageOfficialRecords: false,
+      message: '普通用户推荐已保存为本地私有记录，未发布到官方战绩'
+    };
+  }
+
+  const officialRecords = betRecords.map(r => ({ ...r, official: true }));
+  const resp = await publicApi('record.upsert', {
+    settings: permission.settings,
+    requireAdmin: true,
+    method: 'POST',
+    body: { records: officialRecords }
+  });
+  return { ok: true, count: resp.count ?? officialRecords.length, mode: 'official', canManageOfficialRecords: true };
+}
+
+async function updateOfficialBetRecordByRole(id, patch) {
+  const permission = await officialRecordPermission();
+  if (!permission.publicSyncEnabled) {
+    const r = await chrome.storage.local.get('bet_records');
+    const records = r.bet_records || [];
+    const rec = records.find(x => x.id === id);
+    if (rec) {
+      if (patch.actualScore !== undefined) rec.actualScore = patch.actualScore;
+      if (patch.betResult !== undefined) rec.betResult = patch.betResult;
+    }
+    await chrome.storage.local.set({ bet_records: records });
+    return { ok: true, mode: 'local', record: rec || null };
+  }
+  if (!permission.canManage) return { ok: false, error: permission.reason };
+
+  const resp = await publicApi('record.update', {
+    settings: permission.settings,
+    requireAdmin: true,
+    method: 'POST',
+    body: { id, ...patch }
+  });
+  return { ok: true, mode: 'official', record: resp.record || null };
+}
+
+async function deleteOfficialBetRecordByRole(id) {
+  const permission = await officialRecordPermission();
+  if (!permission.publicSyncEnabled) {
+    const r = await chrome.storage.local.get('bet_records');
+    const records = (r.bet_records || []).filter(x => x.id !== id);
+    await chrome.storage.local.set({ bet_records: records });
+    return { ok: true, mode: 'local' };
+  }
+  if (!permission.canManage) return { ok: false, error: permission.reason };
+
+  await publicApi('record.delete', {
+    settings: permission.settings,
+    requireAdmin: true,
+    method: 'POST',
+    body: { id }
+  });
+  return { ok: true, mode: 'official' };
+}
+
+async function deleteOfficialBetRecordsByDateByRole(date) {
+  const permission = await officialRecordPermission();
+  if (!permission.publicSyncEnabled) {
+    const r = await chrome.storage.local.get('bet_records');
+    const records = (r.bet_records || []).filter(x => x.date !== date);
+    await chrome.storage.local.set({ bet_records: records });
+    return { ok: true, mode: 'local' };
+  }
+  if (!permission.canManage) return { ok: false, error: permission.reason };
+
+  await publicApi('record.deleteDate', {
+    settings: permission.settings,
+    requireAdmin: true,
+    method: 'POST',
+    body: { date }
+  });
+  return { ok: true, mode: 'official' };
+}
+
+async function saveVerifiedBetResult(recordId, matchId, betType, selection, verifyRes) {
+  const permission = await officialRecordPermission();
+  let targetId = recordId || '';
+
+  if (!targetId) {
+    if (permission.publicSyncEnabled) {
+      const list = await getOfficialBetRecords();
+      targetId = list.records?.find(x => x.matchId === matchId && x.betType === betType && x.selection === selection)?.id || '';
+    } else {
+      const r = await chrome.storage.local.get('bet_records');
+      targetId = (r.bet_records || []).find(x => x.matchId === matchId && x.betType === betType && x.selection === selection)?.id || '';
+    }
+  }
+
+  if (!targetId) return { ok: false, error: '未找到需要写回的战绩记录' };
+  return updateOfficialBetRecordByRole(targetId, { actualScore: verifyRes.score, betResult: verifyRes.betResult });
+}
+
 async function storeData(matchId, data) {
-  await chrome.storage.local.set({ [`match_${matchId}`]: { matchId, fetchTime: Date.now(), data } });
+  const entry = { matchId, fetchTime: Date.now(), data };
+  await chrome.storage.local.set({ [`match_${matchId}`]: entry });
+  await uploadPublicMatchDataIfAdmin(matchId, data);
 }
 
 async function getStoredData(matchId) {
   const r = await chrome.storage.local.get(`match_${matchId}`);
-  return r[`match_${matchId}`] || null;
+  if (r[`match_${matchId}`]) return r[`match_${matchId}`];
+
+  const publicEntry = await loadPublicMatchData(matchId);
+  if (publicEntry) {
+    await chrome.storage.local.set({ [`match_${matchId}`]: publicEntry });
+    return publicEntry;
+  }
+  return null;
 }
 
 async function restoreMonitorTasks() {
