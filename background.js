@@ -324,10 +324,8 @@ async function handleMessage(msg, sender, sendResponse) {
         try {
           const settings = await getPublicSyncSettings();
           if (!settings.enabled) { sendResponse({ ok: false, serverEnabled: false, matchIds: [] }); break; }
-          const resp = await fetch(buildPublicApiUrl(settings.apiUrl, 'match.list', { includeData: '0', limit: '1000' }));
-          if (!resp.ok) { sendResponse({ ok: false, error: resp.status, matchIds: [] }); break; }
-          const json = await resp.json();
-          const matchIds = (json.matches || []).map(m => m.matchId);
+          const json = await publicApi('match.list', { settings, params: { includeData: '0', limit: '1000' } });
+          const matchIds = (json.matches || []).map(m => String(m.matchId));
           sendResponse({ ok: true, serverEnabled: true, matchIds });
         } catch (e) {
           sendResponse({ ok: false, error: e.message, matchIds: [] });
