@@ -227,10 +227,16 @@ async function gatherMatchIntel({ home, away, league, tavilyApiKey } = {}) {
   }
 
   const lg = league ? ` ${league}` : '';
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const queries = [
-    `${home} vs ${away}${lg} 伤停 首发 阵容 预测`,
-    `${home} ${away} 最新阵容 伤病 近期战绩`,
-    `${home} ${away} preview lineup injury news`
+    // 赛事实时伤停/阵容（中文）
+    `${home} ${away} ${today} 首发阵容 伤停缺阵 预测`,
+    // 英文预测+伤病（覆盖 Sofascore/Soccernet/专业媒体）
+    `${home} vs ${away} lineup injury prediction ${today}`,
+    // 近期状态+交锋历史
+    `${home} ${away} recent form head to head h2h result`,
+    // 赛事背景+动机（联赛排名/杯赛晋级形势）
+    `${away} ${lg} standings table 2025 2026 season`
   ];
 
   const seen = new Set();
@@ -250,7 +256,7 @@ async function gatherMatchIntel({ home, away, league, tavilyApiKey } = {}) {
       }
     });
     // 已收集足够则提前结束，节省时间
-    if (result.gathered.length >= 8) break;
+    if (result.gathered.length >= 12) break;
   }
 
   result.ok = result.gathered.length > 0;
