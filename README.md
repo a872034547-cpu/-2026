@@ -171,4 +171,12 @@ football-api/         PHP + MySQL 服务端（可选，部署到虚拟主机）
 
 ---
 
-MIT License
+## 许可证
+
+本项目基于 **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** 协议开源。
+
+- ✅ 允许：个人学习、研究、非商业分享、修改
+- ❌ 禁止：用于任何商业目的、付费服务、商业产品、变现平台
+- 📌 要求：转载/二次分发须注明原作者「AI应用研究社团」并附原项目链接
+
+详见 [LICENSE](./LICENSE) 或 https://creativecommons.org/licenses/by-nc/4.0/
