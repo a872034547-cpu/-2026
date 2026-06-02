@@ -108,8 +108,41 @@ function initTabs() {
       tab.classList.add('active');
       const panelId = `tab-${tab.dataset.tab}`;
       document.getElementById(panelId).classList.add('active');
+      // 切换到今日赛事 Tab 时，若列表为空则自动从服务器加载
+      if (tab.dataset.tab === 'daily' && todayMatchItems.length === 0) {
+        loadServerMatchesToDaily();
+      }
     });
   });
+}
+
+// 从服务器直接加载比赛列表（无需先采集）
+async function loadServerMatchesToDaily() {
+  try {
+    const resp = await sendMsg({ type: 'LOAD_SERVER_MATCHES' });
+    if (!resp?.ok || !resp.matches?.length) return;
+    todayMatchItems = resp.matches.map(m => {
+      const matchData = m.data || null;
+      return {
+        match: {
+          id: m.matchId,
+          league: m.league || '',
+          home: m.home || '',
+          away: m.away || '',
+          time: m.matchTime || '',
+          score: '',
+          status: 'upcoming',
+          leagueTier: m.league ? '' : '其他'
+        },
+        matchData,
+        profitability: null,
+        checked: false
+      };
+    });
+    showAlert(`☁️ 已从服务器加载 ${todayMatchItems.length} 场比赛数据`, 'success', 3000);
+    renderDailyList();
+    document.getElementById('collectSelectedBtn').style.display = 'inline-flex';
+  } catch(e) { /* 静默失败 */ }
 }
 
 // ===== 按钮绑定 =====
