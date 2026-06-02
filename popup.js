@@ -522,14 +522,26 @@ async function runDeepAIPredict() {
       const stepNote = `量化模型 ${steps.quant ? '✅' : '⚠️未生成'} · 联网情报 ${steps.intel ? '✅' : '⚠️未检索到'}`;
       if (resp.quantMarkdown) appendChatMsg('assistant', resp.quantMarkdown, '📐 本地量化参考（确定性数学，供AI参考非照抄）');
       if (resp.intel) {
-        const sourceLabel = resp.intel.source === 'tavily' ? '🟢 Tavily 实时搜索' : resp.intel.source === 'free' ? '⚪ 免费搜索引擎（Tavily降级）' : '❌ 未检索到情报';
-        const errNote = resp.intel.errors?.length ? `\n⚠️ 错误: ${resp.intel.errors.join('；')}` : '';
+        const errors = resp.intel.errors || [];
+        const isQuotaExceeded = errors.some(e => e.includes('TAVILY_QUOTA_EXCEEDED'));
+        const sourceLabel = resp.intel.source === 'tavily' ? '🟢 Tavily 实时搜索'
+          : isQuotaExceeded ? '🔴 Tavily 额度已用完'
+          : resp.intel.source === 'free' ? '⚪ 免费搜索引擎（Tavily降级）' : '❌ 未检索到情报';
+        let errNote = '';
+        if (isQuotaExceeded) {
+          errNote = '\n\n⚠️ **内置 Tavily 额度已用完**\n请前往 [设置页面] 配置您自己的 Tavily API Key，免费注册 tavily.com 即可获得每月 1000 次免费额度，填入后立即生效。';
+        } else if (errors.length) {
+          errNote = `\n⚠️ ${errors.join('；')}`;
+        }
         const srcLines = resp.intel.ok
           ? (resp.intel.gathered || []).slice(0, 8).map((r, i) =>
               `${i + 1}. **${r.title}**\n   摘要: ${(r.snippet || '').slice(0, 150)}\n   来源: ${r.url}`
             ).join('\n')
-          : '（未获取到情报）';
+          : '（未获取到情报，已降级使用免费搜索引擎）';
         appendChatMsg('assistant', srcLines + errNote, `🌐 扩展端联网情报 (${sourceLabel})`);
+        if (isQuotaExceeded) {
+          showAlert('⚠️ Tavily 内置额度已用完，请在设置页配置自己的 API Key（tavily.com 免费注册）', 'warn', 8000);
+        }
       }
       // AI 最终裁决
       chatHistory = [{ role: 'assistant', content: resp.prediction.content }];

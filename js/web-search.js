@@ -89,7 +89,10 @@ async function searchTavily(query, apiKeyOverride) {
   }, SEARCH_TIMEOUT_MS);
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
-    throw new Error(`Tavily Hikari HTTP ${resp.status}: ${errText.slice(0, 100)}`);
+    if (resp.status === 429 || resp.status === 402) {
+      throw new Error(`TAVILY_QUOTA_EXCEEDED: 内置 Tavily 额度已用完，请在设置页面配置您自己的 Tavily API Key（免费注册 tavily.com 可获得每月1000次免费额度）`);
+    }
+    throw new Error(`Tavily HTTP ${resp.status}: ${errText.slice(0, 100)}`);
   }
   const data = await resp.json();
   const results = (data.results || []).map(r => ({
