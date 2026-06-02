@@ -2595,13 +2595,13 @@ async function verifyBetRecord(matchId, betType, selection, matchHome, matchAway
     return adjusted > 0 ? '✓' : '✗';
   };
 
-  if (bt.includes('大小') || bt.includes('over') || /大球|小球|进球数/.test(bt) || /大|小|over|under/i.test(sel)) {
+  if (bt.includes('大小') || /over|under/i.test(bt) || /大球|小球|进球数/.test(bt) || /大|小|over|under/i.test(sel)) {
     // 大小球：isBig/isSmall 只从 sel 判断，bt 含"大小"两字不能用于判断方向
     const isBig = /大|over/i.test(sel);
     const isSmall = /小|under/i.test(sel);
     // 两者都无法从sel判断时，fallback 看 bt 是否明确只含大/小
-    const isBigBt = /^大球|^over/i.test(bt);
-    const isSmallBt = /^小球|^under/i.test(bt);
+    const isBigBt = /^(大球|over)/i.test(bt);
+    const isSmallBt = /^(小球|under)/i.test(bt);
     const dirBig  = isBig  || (!isSmall && isBigBt);
     const dirSmall = isSmall || (!isBig && isSmallBt);
 
