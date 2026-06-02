@@ -641,8 +641,11 @@
   <!-- 今日赛事分析 Tab -->
   <div class="tab-panel" id="tab-daily">
     <div class="compact-toolbar">
-      <button class="btn btn-primary btn-fill" id="fetchTodayBtn">📅 采集今日比赛</button>
+      <button class="btn btn-primary btn-fill" id="fetchTodayBtn">📅 加载今日比赛</button>
+      <button class="btn btn-sm" id="collectAllBtn" style="display:none;background:#23863622;border:1px solid #238636;color:#3fb950">⬇ 全部采集</button>
       <button class="btn btn-sm" id="stopCollectBtn" style="display:none;background:#da363322;border:1px solid #da3633;color:#f85149">⏹ 停止</button>
+      <button class="btn btn-sm" id="selectAllBtn" style="display:none;background:#30363d;border:1px solid #444c56;color:#e6edf3">☑ 全选</button>
+      <button class="btn btn-sm" id="invertSelectBtn" style="display:none;background:#30363d;border:1px solid #444c56;color:#e6edf3">⇄ 反选</button>
       <button class="btn btn-sm" id="collectSelectedBtn" style="display:none;background:#1f6feb22;border:1px solid #1f6feb;color:#58a6ff">📊 采集选中</button>
       <button class="btn btn-blue btn-fill" id="batchAIBtn" disabled>✨ AI批量分析</button>
       <select id="dailyFilterTier" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 6px;font-size:11px">

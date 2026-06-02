@@ -170,7 +170,10 @@ function initButtons() {
   document.querySelector('[data-tab="history"]').addEventListener('click', loadHistory);
   // 今日赛事
   document.getElementById('fetchTodayBtn').addEventListener('click', fetchTodayMatches);
+  document.getElementById('collectAllBtn').addEventListener('click', collectAll);
   document.getElementById('stopCollectBtn').addEventListener('click', () => { collectAborted = true; showAlert('正在停止采集...', 'info', 2000); });
+  document.getElementById('selectAllBtn').addEventListener('click', selectAll);
+  document.getElementById('invertSelectBtn').addEventListener('click', invertSelect);
   document.getElementById('collectSelectedBtn').addEventListener('click', collectSelected);
   document.getElementById('batchAIBtn').addEventListener('click', runBatchAI);
   document.getElementById('syncServerBtn')?.addEventListener('click', () => syncAllToServer('syncServerBtn'));
@@ -1008,33 +1011,20 @@ let batchAIResult = null; // AI批量分析结果
 
 let collectAborted = false; // 停止采集标志
 
+// 加载今日比赛列表（只获取赛事/队名，不采集盘口）
 async function fetchTodayMatches() {
   setLoading('fetchTodayBtn', true);
-  collectAborted = false;
-  document.getElementById('batchAIBtn').disabled = true;
-  document.getElementById('stopCollectBtn').style.display = 'inline-flex';
-  document.getElementById('collectSelectedBtn').style.display = 'none';
-  showAlert('正在采集今日比赛，页面Ajax加载需等待约15-30秒...', 'info', 30000);
+  showAlert('正在加载今日比赛列表，需等待约15-30秒...', 'info', 30000);
   try {
     const resp = await sendMsg({ type: 'FETCH_TODAY_MATCHES' });
     if (!resp.ok || !resp.matches?.length) {
       showAlert('未获取到今日比赛。提示：请确保已登录球探网，或手动打开 live.titan007.com 后重试', 'warn', 8000);
       return;
     }
-    // 过滤已结束比赛（有比分且状态为finished），这些场次无需采集盘口
     const allMatches = resp.matches;
-    const finishedMatches = allMatches.filter(m => m.status === 'finished' || (m.score && /^\d+[-:]\d+$/.test(m.score.trim())));
     todayMatchItems = allMatches.map(m => ({ match: m, matchData: null, profitability: null, checked: false }));
 
-    const finishedTip = finishedMatches.length > 0
-      ? `（已过滤 ${finishedMatches.length} 场已结束比赛，仅显示未开场/进行中）`
-      : '';
-    showAlert(`✅ 获取到 ${allMatches.length} 场比赛${finishedTip}，正在从服务器加载已采集数据...`, 'info', 6000);
-    renderDailyList();
-    switchTab('daily');
-    document.getElementById('collectSelectedBtn').style.display = 'inline-flex';
-
-    // 先批量从服务器加载已有数据，减少重复采集
+    // 从服务器加载已有盘口数据
     let serverLoadedCount = 0;
     try {
       const pubResp = await sendMsg({ type: 'LOAD_PUBLIC_MATCH_LIST' });
@@ -1042,7 +1032,6 @@ async function fetchTodayMatches() {
         const serverIdSet = new Set(pubResp.matchIds.map(String));
         for (const item of todayMatchItems) {
           if (serverIdSet.has(String(item.match.id))) {
-            // 从服务器拉取完整数据并缓存到 item.matchData
             const loadResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id, preferServer: true });
             if (loadResp?.ok && loadResp.data) {
               item.matchData = loadResp.data;
@@ -1051,49 +1040,65 @@ async function fetchTodayMatches() {
             }
           }
         }
-        if (serverLoadedCount > 0) {
-          showAlert(`☁️ 已从服务器加载 ${serverLoadedCount} 场数据`, 'success', 3000);
-          renderDailyList();
-        }
       }
-    } catch (e) { /* 服务器加载失败不阻断本地采集 */ }
+    } catch (e) {}
 
-    // 逐场自动采集盘口数据（跳过已结束或已从服务器加载的比赛）
-    let doneCount = 0;
-    let skippedFinished = 0;
-    for (let i = 0; i < todayMatchItems.length; i++) {
-      if (collectAborted) break;
-      const item = todayMatchItems[i];
-      if (item.matchData) continue; // 已采集或已从服务器加载，跳过
-      // 跳过已结束比赛，无需采集盘口
-      if (item.match.status === 'finished' || (item.match.score && /^\d+[-:]\d+$/.test(item.match.score.trim()))) {
-        skippedFinished++;
-        continue;
-      }
-      try {
-        const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id, league: item.match.league, home: item.match.home, away: item.match.away, matchTime: item.match.time });
-        if (dataResp.ok) {
-          item.matchData = dataResp.data;
-          item.profitability = dataResp.profitability;
-          doneCount++;
-        }
-      } catch (e) { /* 单场失败不影响整体 */ }
-      if (i % 5 === 4 || i === todayMatchItems.length - 1) renderDailyList();
-      if (i % 2 === 1) await new Promise(r => setTimeout(r, 1000));
-    }
+    showAlert(`✅ 已加载 ${allMatches.length} 场比赛${serverLoadedCount > 0 ? `，☁️ 服务器已有 ${serverLoadedCount} 场数据` : ''}`, 'success', 4000);
+    renderDailyList();
+    switchTab('daily');
+    // 显示操作按钮
+    document.getElementById('collectAllBtn').style.display = 'inline-flex';
+    document.getElementById('collectSelectedBtn').style.display = 'inline-flex';
+    document.getElementById('selectAllBtn').style.display = 'inline-flex';
+    document.getElementById('invertSelectBtn').style.display = 'inline-flex';
     document.getElementById('batchAIBtn').disabled = false;
-    const skipNote = skippedFinished > 0 ? `，跳过 ${skippedFinished} 场已结束` : '';
-    const serverNote = serverLoadedCount > 0 ? `，☁️ 服务器 ${serverLoadedCount} 场` : '';
-    showAlert(collectAborted
-      ? `⏹ 已停止，完成 ${doneCount} 场采集${serverNote}`
-      : `✅ 采集完成：${doneCount} 场新采集${serverNote}${skipNote}`, 'success', 4000);
   } catch (e) {
-    showAlert(`采集失败: ${e.message}`, 'error');
+    showAlert(`加载失败: ${e.message}`, 'error');
   } finally {
     setLoading('fetchTodayBtn', false);
-    document.getElementById('stopCollectBtn').style.display = 'none';
-    collectAborted = false;
   }
+}
+
+// 全部采集（对所有未采集的比赛采集盘口数据）
+async function collectAll() {
+  const targets = todayMatchItems.filter(it => !it.matchData &&
+    it.match.status !== 'finished' && !(it.match.score && /^\d+[-:]\d+$/.test(it.match.score.trim())));
+  if (!targets.length) { showAlert('所有比赛已采集或已结束', 'info'); return; }
+  collectAborted = false;
+  document.getElementById('stopCollectBtn').style.display = 'inline-flex';
+  document.getElementById('collectAllBtn').disabled = true;
+  showAlert(`正在采集全部 ${targets.length} 场比赛盘口数据...`, 'info', 60000);
+  let doneCount = 0;
+  for (let i = 0; i < targets.length; i++) {
+    if (collectAborted) break;
+    const item = targets[i];
+    try {
+      const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id, league: item.match.league, home: item.match.home, away: item.match.away, matchTime: item.match.time });
+      if (dataResp.ok) {
+        item.matchData = dataResp.data;
+        item.profitability = dataResp.profitability;
+        doneCount++;
+      }
+    } catch (e) {}
+    if (i % 5 === 4 || i === targets.length - 1) renderDailyList();
+    if (i % 2 === 1) await new Promise(r => setTimeout(r, 800));
+  }
+  document.getElementById('stopCollectBtn').style.display = 'none';
+  document.getElementById('collectAllBtn').disabled = false;
+  showAlert(collectAborted ? `⏹ 已停止，完成 ${doneCount} 场` : `✅ 全部采集完成：${doneCount} 场`, 'success', 4000);
+  collectAborted = false;
+}
+
+// 全选
+function selectAll() {
+  todayMatchItems.forEach(it => it.checked = true);
+  renderDailyList();
+}
+
+// 反选
+function invertSelect() {
+  todayMatchItems.forEach(it => it.checked = !it.checked);
+  renderDailyList();
 }
 
 async function collectSelected() {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Titan007 足球预测助手",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "实时监控球探网盘口数据，本地量化建模(去水概率/泊松/凯利)+联网情报检索+AI综合裁决，提供赛前及实时深度预测",
   "permissions": [
     "storage",
