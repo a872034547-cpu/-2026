@@ -2596,29 +2596,37 @@ async function verifyBetRecord(matchId, betType, selection, matchHome, matchAway
   };
 
   if (bt.includes('大小') || bt.includes('over') || /大球|小球|进球数/.test(bt) || /大|小|over|under/i.test(sel)) {
-    // 大小球
-    const isBig = /大|over/i.test(sel) || /大|over/i.test(bt);
-    const isSmall = /小|under/i.test(sel) || /小|under/i.test(bt);
+    // 大小球：isBig/isSmall 只从 sel 判断，bt 含"大小"两字不能用于判断方向
+    const isBig = /大|over/i.test(sel);
+    const isSmall = /小|under/i.test(sel);
+    // 两者都无法从sel判断时，fallback 看 bt 是否明确只含大/小
+    const isBigBt = /^大球|^over/i.test(bt);
+    const isSmallBt = /^小球|^under/i.test(bt);
+    const dirBig  = isBig  || (!isSmall && isBigBt);
+    const dirSmall = isSmall || (!isBig && isSmallBt);
+
     const line = parseHandicapValue(sel.replace(/大|小|over|under/gi, ''));
     if (isFinite(line)) {
-      // 整数线可能走盘
       const adj = totalGoals - line;
       let r;
-      const q = (line * 4) % 2; // .25/.75 盘口标志
-      if (q !== 0) {
-        // 半球类，无走盘
-        r = adj > 0 ? (isBig ? '✓' : '✗') : (isBig ? '✗' : '✓');
-      } else if (adj === 0) {
-        r = '➖'; // 正好等于整数线，走盘
+      // .25/.75 盘口：(line*4)%2 !== 0；整数和 .5 盘口：(line*4)%2 === 0
+      const isQuarter = (Math.round(line * 4) % 2) !== 0;
+      if (isQuarter) {
+        // 四分之一盘：分半赢/半输
+        if (adj > 0) r = dirBig ? '✓' : dirSmall ? '✗' : '?';
+        else if (adj < 0) r = dirBig ? '✗' : dirSmall ? '✓' : '?';
+        else r = '➖';
+      } else if (adj === 0 && Number.isInteger(line)) {
+        r = '➖'; // 整数线正好平局走盘
       } else {
-        r = adj > 0 ? (isBig ? '✓' : '✗') : (isBig ? '✗' : '✓');
+        if (adj > 0) r = dirBig ? '✓' : dirSmall ? '✗' : '?';
+        else r = dirBig ? '✗' : dirSmall ? '✓' : '?';
       }
-      betResult = isSmall && !isBig
-        ? (r === '✓' ? '✓' : r === '✗' ? '✗' : r)
-        : r;
-      autoJudge = `总进球${totalGoals}，盘口${line}（${isBig ? '大' : '小'}）→ ${betResult}`;
+      betResult = r;
+      const dir = dirBig ? '大' : dirSmall ? '小' : '未知方向';
+      autoJudge = `总进球${totalGoals}，盘口${line}（${dir}）→ ${betResult}`;
     } else {
-      autoJudge = `比分${homeGoals}-${awayGoals}，大小盘口无法解析，请手动判断`;
+      autoJudge = `比分${homeGoals}-${awayGoals}，大小盘口无法解析（sel="${sel}"），请手动判断`;
     }
   } else if (bt.includes('亚盘') || bt.includes('让球') || bt.includes('让') || /主|客|home|away/i.test(sel) || (matchHome && sel.includes(matchHome)) || (matchAway && sel.includes(matchAway))) {
     // 亚盘让球
