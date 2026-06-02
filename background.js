@@ -2485,7 +2485,8 @@ async function runDeepPrediction(stored, matchId, recentStats) {
     const home = mi.home || report.structured?.home;
     const away = mi.away || report.structured?.away;
     const league = mi.league || '';
-    intelResult = await gatherMatchIntel({ home, away, league });
+    const { tavilyApiKey: tKey } = await chrome.storage.sync.get('tavilyApiKey');
+    intelResult = await gatherMatchIntel({ home, away, league, tavilyApiKey: tKey || '' });
     intelMd = intelToMarkdown(intelResult);
     steps.intel = !!(intelResult && intelResult.ok);
   } catch (e) {

@@ -451,12 +451,13 @@ ${systemContext}
   }
 
   async _getSettings() {
-    const result = await chrome.storage.sync.get(['aiProvider', 'aiApiKey', 'aiModel', 'aiCustomEndpoint']);
+    const result = await chrome.storage.sync.get(['aiProvider', 'aiApiKey', 'aiModel', 'aiCustomEndpoint', 'tavilyApiKey']);
     return {
       provider: result.aiProvider || 'openai',
       apiKey: result.aiApiKey || '',
       model: result.aiModel || '',
-      customEndpoint: result.aiCustomEndpoint || ''
+      customEndpoint: result.aiCustomEndpoint || '',
+      tavilyApiKey: result.tavilyApiKey || ''
     };
   }
 }

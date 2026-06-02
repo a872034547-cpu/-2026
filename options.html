@@ -286,6 +286,25 @@
     </div>
   </div>
 
+  <!-- 联网搜索配置 -->
+  <div class="section">
+    <div class="section-title">🔍 联网搜索配置（Tavily）</div>
+
+    <div class="form-group">
+      <label>Tavily API Key <span class="label-hint">（可选，配置后任何 AI 模型均可获取实时搜索结果）</span></label>
+      <div class="key-display">
+        <input type="password" id="tavilyApiKey" placeholder="tvly-..." />
+        <button class="eye-btn" id="tavilyEyeBtn" title="显示/隐藏">👁</button>
+      </div>
+    </div>
+
+    <div class="model-hint">
+      💡 <strong>Tavily</strong> 是专为 AI 设计的实时搜索 API，可为每次预测检索最新的伤停/阵容/赔率信息，与 AI 自身搜索形成多源对比。
+      未配置时自动降级使用 DuckDuckGo / Bing 免费搜索。
+      <br>前往 <code>app.tavily.com</code> 注册获取免费 API Key（每月 1000 次免费额度）。
+    </div>
+  </div>
+
   <!-- 监控配置 -->
   <div class="section">
     <div class="section-title">📡 监控配置</div>

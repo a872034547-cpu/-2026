@@ -1,12 +1,12 @@
 /**
- * web-search.js — 联网情报检索 (2.0)
+ * web-search.js — 联网情报检索 (2.1)
  *
  * 在 Service Worker 内执行真实网络检索，为 AI 提供"扩展端独立核实"的实时情报，
  * 与 AI 模型自身的联网搜索形成双重保障，确保信息真实准确。
  *
  * 设计：
- *  - 多搜索引擎降级：DuckDuckGo Lite → DuckDuckGo HTML → Bing。
- *  - 不依赖任何 API Key（使用公开 HTML 端点）。
+ *  - 优先使用 Tavily Search API（高质量实时结果，需配置 API Key）
+ *  - 降级链路：Tavily → DuckDuckGo Lite → DuckDuckGo HTML → Bing
  *  - 全部带超时与异常兜底，单源失败自动切换，绝不抛出导致主流程中断。
  *  - 返回结构化结果（标题/摘要/来源URL），并标注检索时间，供 AI 引用与核对。
  *
@@ -15,6 +15,7 @@
 
 const SEARCH_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_QUERY = 6;
+const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 /** 带超时的 fetch */
 async function fetchWithTimeout(url, options = {}, timeout = SEARCH_TIMEOUT_MS) {
@@ -52,6 +53,57 @@ function uddg(href) {
     if (m) return decodeURIComponent(m[1]);
   } catch {}
   return href;
+}
+
+// ---------------------------------------------------------------------------
+// Tavily Search API（首选，高质量实时结果）
+// ---------------------------------------------------------------------------
+
+/**
+ * Tavily Search API
+ * @param {string} query
+ * @param {string} apiKey
+ * @returns {Promise<Array>}
+ */
+async function searchTavily(query, apiKey) {
+  if (!apiKey) throw new Error('Tavily API Key 未配置');
+  const resp = await fetchWithTimeout(TAVILY_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      query,
+      search_depth: 'basic',
+      include_answer: true,
+      include_raw_content: false,
+      max_results: MAX_RESULTS_PER_QUERY,
+      include_domains: [],
+      exclude_domains: []
+    })
+  }, SEARCH_TIMEOUT_MS);
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`Tavily HTTP ${resp.status}: ${errText.slice(0, 100)}`);
+  }
+  const data = await resp.json();
+  const results = (data.results || []).map(r => ({
+    title: r.title || '',
+    snippet: r.content || r.snippet || '',
+    url: r.url || '',
+    source: 'tavily'
+  }));
+  // 如果 Tavily 返回了 answer，拼一条特殊条目放最前
+  if (data.answer) {
+    results.unshift({
+      title: '[Tavily 综合答案]',
+      snippet: data.answer.slice(0, 400),
+      url: '',
+      source: 'tavily-answer'
+    });
+  }
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,15 +182,26 @@ async function searchBing(query) {
 
 /**
  * 执行单次查询，按降级顺序尝试，返回首个非空结果集。
+ * @param {string} query
+ * @param {string} [tavilyApiKey]
  */
-async function runQuery(query) {
+async function runQuery(query, tavilyApiKey) {
+  // 如果配置了 Tavily Key，优先使用
+  if (tavilyApiKey) {
+    try {
+      const r = await searchTavily(query, tavilyApiKey);
+      if (r && r.length > 0) return r;
+    } catch (e) {
+      console.warn('[web-search] Tavily 失败，降级:', e.message);
+    }
+  }
+  // 降级到免费源
   const engines = [searchDuckLite, searchDuckHtml, searchBing];
   for (const engine of engines) {
     try {
       const r = await engine(query);
       if (r && r.length > 0) return r;
     } catch (e) {
-      // 单源失败，继续降级
       console.warn('[web-search] 源失败:', engine.name, e.message);
     }
   }
@@ -147,14 +210,15 @@ async function runQuery(query) {
 
 /**
  * 为一场比赛检索综合情报。
- * 输入：{ home, away, league }
- * 输出：{ ok, queries:[{query,results}], gathered:[...扁平结果], fetchedAt, errors:[] }
+ * 输入：{ home, away, league, tavilyApiKey }
+ * 输出：{ ok, source, queries:[{query,results}], gathered:[...扁平结果], fetchedAt, errors:[] }
  *
  * 检索维度：伤停/阵容、近期状态、交锋、赛前预测。
+ * 优先使用 Tavily（如配置 API Key），否则降级免费源。
  */
-async function gatherMatchIntel({ home, away, league } = {}) {
+async function gatherMatchIntel({ home, away, league, tavilyApiKey } = {}) {
   const fetchedAt = new Date().toISOString();
-  const result = { ok: false, queries: [], gathered: [], fetchedAt, errors: [] };
+  const result = { ok: false, source: 'none', queries: [], gathered: [], fetchedAt, errors: [] };
   if (!home || !away) {
     result.errors.push('缺少球队名，无法检索情报');
     return result;
@@ -162,7 +226,7 @@ async function gatherMatchIntel({ home, away, league } = {}) {
 
   const lg = league ? ` ${league}` : '';
   const queries = [
-    `${home} vs ${away}${lg} 伤停 首发 预测`,
+    `${home} vs ${away}${lg} 伤停 首发 阵容 预测`,
     `${home} ${away} 最新阵容 伤病 近期战绩`,
     `${home} ${away} preview lineup injury news`
   ];
@@ -171,7 +235,7 @@ async function gatherMatchIntel({ home, away, league } = {}) {
   for (const q of queries) {
     let results = [];
     try {
-      results = await runQuery(q);
+      results = await runQuery(q, tavilyApiKey);
     } catch (e) {
       result.errors.push(`查询失败 [${q}]: ${e.message}`);
     }
@@ -188,6 +252,11 @@ async function gatherMatchIntel({ home, away, league } = {}) {
   }
 
   result.ok = result.gathered.length > 0;
+  // 标注数据源
+  if (result.gathered.length > 0) {
+    const hasTavily = result.gathered.some(r => r.source === 'tavily' || r.source === 'tavily-answer');
+    result.source = hasTavily ? 'tavily' : 'free';
+  }
   if (!result.ok && result.errors.length === 0) {
     result.errors.push('所有搜索源均未返回结果（可能被限流或网络不可达）');
   }
@@ -204,14 +273,15 @@ function intelToMarkdown(intel) {
       (intel?.errors?.length ? `（${intel.errors.join('；')}）` : '') +
       '。请基于你自身的联网搜索与知识库补充，并明确标注信息来源与时效。';
   }
+  const sourceLabel = intel.source === 'tavily' ? '🟢 Tavily 实时搜索' : '⚪ 免费搜索引擎';
   const L = [];
-  L.push('### 🌐 扩展端联网情报线索（检索时间：' + intel.fetchedAt + '）');
+  L.push(`### 🌐 扩展端联网情报线索（${sourceLabel}，检索时间：${intel.fetchedAt}）`);
   L.push('> 以下为扩展独立检索到的公开网页线索，**仅作核实参考**，可能含噪声或过期信息。请你结合自身联网搜索交叉验证，采信前需判断来源可靠性与时效，不可直接照搬。');
   L.push('');
-  intel.gathered.slice(0, 8).forEach((r, i) => {
+  intel.gathered.slice(0, 10).forEach((r, i) => {
     L.push(`${i + 1}. **${r.title}**`);
-    if (r.snippet) L.push(`   - 摘要：${r.snippet.slice(0, 180)}`);
-    L.push(`   - 来源：${r.url}（${r.source}）`);
+    if (r.snippet) L.push(`   - 摘要：${r.snippet.slice(0, 300)}`);
+    if (r.url) L.push(`   - 来源：${r.url}（${r.source}）`);
   });
   L.push('');
   return L.join('\n');

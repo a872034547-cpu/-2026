@@ -21,6 +21,7 @@
     "https://live.titan007.com/*",
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
+    "https://api.tavily.com/*",
     "https://lite.duckduckgo.com/*",
     "https://html.duckduckgo.com/*",
     "https://duckduckgo.com/*",

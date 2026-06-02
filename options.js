@@ -2,6 +2,7 @@
 
 const KEYS = [
   'aiProvider', 'aiApiKey', 'aiModel', 'aiCustomEndpoint',
+  'tavilyApiKey',
   'defaultInterval', 'sensitivity',
   'notifyOddsChange', 'autoReport', 'autoPreMatch',
   'srcAnalysis', 'srcAsian', 'srcOverUnder', 'srcCorner',
@@ -24,6 +25,7 @@ async function loadSettings() {
   setVal('apiKey', settings.aiApiKey || '');
   setVal('aiModel', settings.aiModel || '');
   setVal('customEndpoint', settings.aiCustomEndpoint || '');
+  setVal('tavilyApiKey', settings.tavilyApiKey || '');
 
   // 监控配置
   setVal('defaultInterval', settings.defaultInterval || '2');
@@ -87,6 +89,13 @@ function initEyeBtn() {
     input.type = input.type === 'password' ? 'text' : 'password';
     btn.textContent = input.type === 'password' ? '👁' : '🙈';
   });
+
+  const tavilyBtn = document.getElementById('tavilyEyeBtn');
+  const tavilyInput = document.getElementById('tavilyApiKey');
+  tavilyBtn.addEventListener('click', () => {
+    tavilyInput.type = tavilyInput.type === 'password' ? 'text' : 'password';
+    tavilyBtn.textContent = tavilyInput.type === 'password' ? '👁' : '🙈';
+  });
 }
 
 function initButtons() {
@@ -116,6 +125,7 @@ async function saveSettings() {
     aiApiKey: apiKey,
     aiModel: getVal('aiModel').trim(),
     aiCustomEndpoint: getVal('customEndpoint').trim(),
+    tavilyApiKey: getVal('tavilyApiKey').trim(),
     defaultInterval: getVal('defaultInterval'),
     sensitivity: getVal('sensitivity'),
     notifyOddsChange: getCheck('notifyOddsChange'),
