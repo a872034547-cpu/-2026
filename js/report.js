@@ -260,7 +260,8 @@ export class ReportGenerator {
 
       // 各公司完整盘口
       if (asian.companies?.length > 0) {
-        sections.push(`| 公司 | 初盘主 | 初盘口 | 初盘客 | 即时主 | 即时盘 | 即时客 |`);
+        sections.push(`> 水位说明：主水低（<0.9）= 主队被看好；客水低 = 客队被看好；水位差越大倾向越明显`);
+        sections.push(`| 公司 | 初主水 | 初盘口 | 初客水 | 即主水 | 即盘口 | 即客水 |`);
         sections.push(`|------|--------|--------|--------|--------|--------|--------|`);
         asian.companies.forEach(c => {
           const ml = c.mainLine || c;
@@ -278,9 +279,9 @@ export class ReportGenerator {
       // 历史变化记录
       if (asian.history?.length > 0) {
         sections.push('');
-        sections.push(`**盘口变化记录** (最近 ${Math.min(15, asian.history.length)} 条)`);
-        sections.push(`| 时间 | 盘口 | 主水 | 客水 |`);
-        sections.push(`|------|------|------|------|`);
+        sections.push(`**盘口变化记录** (最近 ${Math.min(15, asian.history.length)} 条，主水低=主队被看好)`);
+        sections.push(`| 时间 | 盘口 | 主队水位 | 客队水位 |`);
+        sections.push(`|------|------|----------|----------|`);
         asian.history.slice(0, 15).forEach(h => {
           sections.push(`| ${h.time} | ${h.line} | ${h.v1} | ${h.v2} |`);
         });
