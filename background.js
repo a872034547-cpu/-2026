@@ -384,8 +384,14 @@ async function handleMessage(msg, sender, sendResponse) {
 
       case 'GET_BET_RECORDS': {
         // 战绩Tab展示官方记录：公共同步开启时从 PHP 服务端读取；未开启时兼容旧本地模式。
-        const result = await getOfficialBetRecords();
-        sendResponse(result);
+        // forceLocal=true：强制读取本地 bet_records，忽略服务器
+        if (msg.forceLocal) {
+          const r = await chrome.storage.local.get('bet_records');
+          sendResponse({ records: r.bet_records || [], publicSyncEnabled: false, canManageOfficialRecords: true, isAdmin: true, mode: 'local' });
+        } else {
+          const result = await getOfficialBetRecords();
+          sendResponse(result);
+        }
         break;
       }
 

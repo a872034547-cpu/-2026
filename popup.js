@@ -144,6 +144,7 @@ function initButtons() {
   document.getElementById('batchAIBtn').addEventListener('click', runBatchAI);
   document.getElementById('syncServerBtn')?.addEventListener('click', () => syncAllToServer('syncServerBtn'));
   document.getElementById('uploadLocalRecordsBtn')?.addEventListener('click', () => syncAllToServer('uploadLocalRecordsBtn'));
+  document.getElementById('recordsModeSwitch')?.addEventListener('change', loadDailyRecords);
   document.getElementById('dailyFilterTier').addEventListener('change', renderDailyList);
   // 复选框事件委托
   document.getElementById('dailyMatchList').addEventListener('change', (e) => {
@@ -1377,7 +1378,9 @@ let betRecordsMeta = {
 };
 
 async function loadDailyRecords() {
-  const resp = await sendMsg({ type: 'GET_BET_RECORDS' });
+  const modeSwitch = document.getElementById('recordsModeSwitch');
+  const forceLocal = modeSwitch ? modeSwitch.value === 'local' : false;
+  const resp = await sendMsg({ type: 'GET_BET_RECORDS', forceLocal });
   allBetRecords = resp.records || [];
   betRecordsMeta = {
     publicSyncEnabled: !!resp.publicSyncEnabled,
