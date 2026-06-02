@@ -350,6 +350,32 @@ export class ReportGenerator {
     }
     sections.push('');
 
+    // ========== 对赛往绩 ==========
+    const fmtMatchRows = (rows) => rows.map(r =>
+      `| ${r.type} | ${r.date} | ${r.home} | ${r.score}(${r.halfScore}) | ${r.corners||'-'} | ${r.away} | ${r.result} | ${r.handicapResult} | ${r.ouResult} |`
+    ).join('\n');
+    if (analysis?.headToHead?.length > 0) {
+      sections.push(`## 十三、对赛往绩（近${analysis.headToHead.length}场）`);
+      sections.push(`| 类型 | 日期 | 主场 | 比分(半) | 角球 | 客场 | 胜负 | 让球 | 大小 |`);
+      sections.push(`|------|------|------|---------|------|------|------|------|------|`);
+      sections.push(fmtMatchRows(analysis.headToHead));
+      sections.push('');
+    }
+    if (analysis?.homeRecentMatches?.length > 0) {
+      sections.push(`## 十四、${home}近期战绩（近${analysis.homeRecentMatches.length}场）`);
+      sections.push(`| 类型 | 日期 | 主场 | 比分(半) | 角球 | 客场 | 胜负 | 让球 | 大小 |`);
+      sections.push(`|------|------|------|---------|------|------|------|------|------|`);
+      sections.push(fmtMatchRows(analysis.homeRecentMatches));
+      sections.push('');
+    }
+    if (analysis?.awayRecentMatches?.length > 0) {
+      sections.push(`## 十五、${away}近期战绩（近${analysis.awayRecentMatches.length}场）`);
+      sections.push(`| 类型 | 日期 | 主场 | 比分(半) | 角球 | 客场 | 胜负 | 让球 | 大小 |`);
+      sections.push(`|------|------|------|---------|------|------|------|------|------|`);
+      sections.push(fmtMatchRows(analysis.awayRecentMatches));
+      sections.push('');
+    }
+
     // ========== AI 分析请求 ==========
     sections.push('---');
     sections.push(`## 📊 AI 分析请求`);

@@ -1689,6 +1689,41 @@ function extractPageData(dataType) {
     result.dataComparison.away = Object.assign(result.dataComparison.away || {}, result.seasonComparison.away.goals.total || {});
     result._debug.goalStatTables = goalStatTables.map(function(x) { return { owner: x.owner, games: x.games, avgGoal: x.avgGoal, avgLoss: x.avgLoss, goalsFor: x.goalsFor, goalsAgainst: x.goalsAgainst }; });
 
+    // ---- 对赛往绩 & 近期战绩（文本解析）----
+    // 每条记录行格式：类型 日期 主场 比分(半场) 角球 客场 ... 胜负 让球 进球数
+    var parseMatchResultRows = function(sectionText) {
+      var rows = [];
+      var lineRe = /(\w+)\s+(\d{2}-\d{2}-\d{2})\s+(.+?)\s+(\d+-\d+)\((\d+-\d+)\)\s+([\d-]+)\s+(.+?)\s+([\u4e00-\u9fa5勝負平]{1,2})\s+([\u8d62\u8f38\u8d70\u8d62贏輸走]{1,2})\s+([\u5927\u5c0f\u8d70大小走]{1,2})/g;
+      var rm2;
+      while ((rm2 = lineRe.exec(sectionText)) !== null) {
+        rows.push({
+          type: rm2[1], date: rm2[2],
+          home: rm2[3].trim(), score: rm2[4], halfScore: rm2[5],
+          corners: rm2[6], away: rm2[7].trim(),
+          result: rm2[8], handicapResult: rm2[9], ouResult: rm2[10]
+        });
+        if (rows.length >= 10) break;
+      }
+      return rows;
+    };
+
+    // 定位三个区块：对赛往绩 / 主队近期战绩 / 客队近期战绩
+    var h2hIdx = text.indexOf('对赛往绩');
+    var homeRecentIdx = text.indexOf('近期战绩', h2hIdx + 1);
+    var awayRecentIdx = homeRecentIdx > 0 ? text.indexOf('近期战绩', homeRecentIdx + 100) : -1;
+
+    if (h2hIdx >= 0) {
+      var h2hEnd = homeRecentIdx > 0 ? homeRecentIdx : h2hIdx + 2000;
+      result.headToHead = parseMatchResultRows(text.slice(h2hIdx, h2hEnd));
+    }
+    if (homeRecentIdx >= 0) {
+      var hrEnd = awayRecentIdx > 0 ? awayRecentIdx : homeRecentIdx + 3000;
+      result.homeRecentMatches = parseMatchResultRows(text.slice(homeRecentIdx, hrEnd));
+    }
+    if (awayRecentIdx >= 0) {
+      result.awayRecentMatches = parseMatchResultRows(text.slice(awayRecentIdx, awayRecentIdx + 3000));
+    }
+
     var homeGoals = result.seasonComparison.home.goals.total || {};
     var awayGoals = result.seasonComparison.away.goals.total || {};
     var hf = parseFloat(homeGoals.avgGoal);
