@@ -29,7 +29,7 @@ async function loadSettings() {
   setVal('tavilyApiKey', settings.tavilyApiKey || '');
 
   // 公共数据同步
-  setCheck('publicSyncEnabled', !!settings.publicSyncEnabled);
+  setCheck('publicSyncEnabled', settings.publicSyncEnabled !== false);
   setVal('publicApiUrl', settings.publicApiUrl || 'http://cdu.cc.cd/football-api/api.php');
   setVal('publicAdminKey', settings.publicAdminKey || '');
 
