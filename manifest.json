@@ -22,6 +22,7 @@
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
     "https://api.tavily.com/*",
+    "https://tavily.ivanli.cc/*",
     "https://lite.duckduckgo.com/*",
     "https://html.duckduckgo.com/*",
     "https://duckduckgo.com/*",
