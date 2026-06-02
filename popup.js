@@ -1406,29 +1406,29 @@ function parseBetAdvicesFromAI(aiContent, matchInfo, matchId, date) {
     const cols = line.split('|').map(c => c.trim()).filter(Boolean);
     if (cols.length < 3) return;
 
-    // 兼容多种列数：找含"价值/推荐/建议"关键词的列，或默认第4列
-    let valueText = '';
-    let betType = '', selection = '', odds = '', position = '';
-    if (cols.length >= 4) {
-      betType    = cols[0] || '';
-      selection  = cols[1] || '';
-      odds       = cols[2] || '';
-      valueText  = cols[3] || '';
-      position   = cols[4] || '';
-    } else if (cols.length === 3) {
-      betType   = cols[0] || '';
-      selection = cols[1] || '';
-      valueText = cols[2] || '';
+    // 过滤表头行
+    if (/盘口|类型|选项|建议|赔率/.test(cols[0]) && /选项|方向|投注/.test(cols[1] || '')) return;
+
+    // 整行必须含有"高价值"或"中高价值"才进入战绩，严格过滤
+    const isHighValue = /高价值|中高价值/.test(line);
+    if (!isHighValue) return;
+
+    // 灵活提取列：找含价值关键词的列作为 valueText
+    let betType = cols[0] || '';
+    let selection = cols[1] || '';
+    let odds = '', valueText = '', position = '';
+    // 遍历所有列，找到含高价值的列
+    let valueColIdx = cols.findIndex(c => /高价值|中高价值/.test(c));
+    if (valueColIdx >= 0) {
+      valueText = cols[valueColIdx];
+      // 按标准格式：盘口|选项|赔率|价值|仓位
+      odds     = cols[2] || '';
+      position = cols[valueColIdx + 1] || '';
+    } else {
+      odds = cols[2] || '';
     }
 
-    // 宽松识别：只要该行含有价值/推荐信号或投注类型关键词，就记录
-    const hasValueSignal = /高价值|中高价值|★★|推荐|✅/.test(valueText + ' ' + line);
-    const hasBetType = /亚盘|大小球|角球|让球|胜平负|大球|小球|主胜|客胜|平局/.test(betType + ' ' + selection + ' ' + line);
-    if (!hasValueSignal && !hasBetType) return;
     if (!betType || !selection) return;
-
-    // 过滤表头行
-    if (/盘口|类型|选项|建议|赔率/.test(betType) && /选项|方向|投注/.test(selection)) return;
 
     const id = `${matchId}_${betType}_${selection}_${date}`.replace(/\s+/g, '');
     records.push({
@@ -1442,7 +1442,7 @@ function parseBetAdvicesFromAI(aiContent, matchInfo, matchId, date) {
       betType,
       selection,
       odds,
-      valueLevel: valueText || '推荐',
+      valueLevel: valueText || '高价值',
       position,
       betResult: '',
       actualScore: '',
