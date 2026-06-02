@@ -1689,6 +1689,31 @@ function extractPageData(dataType) {
     result.dataComparison.away = Object.assign(result.dataComparison.away || {}, result.seasonComparison.away.goals.total || {});
     result._debug.goalStatTables = goalStatTables.map(function(x) { return { owner: x.owner, games: x.games, avgGoal: x.avgGoal, avgLoss: x.avgLoss, goalsFor: x.goalsFor, goalsAgainst: x.goalsAgainst }; });
 
+    // ---- 即时走势比较表：欧赔 + 欧转亚盘 + 实际亚盘 + 进球数 ----
+    // 解析分析页特有的三合一汇总表，提取"欧转亚盘"（欧赔隐含盘口）与实际亚盘的对比
+    var comparativeOdds = [];
+    var coRe = /([^\s]+)\s+(初|即时)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([^\s]+)\s+([\d.]+)\s+([\d.]+)\s+([^\s]+)\s+([\d.]+)\s+([\d.]+)\s+([^\s\d]+)\s+([\d.]+)/g;
+    var coMatch;
+    var coCurrent = null;
+    while ((coMatch = coRe.exec(text)) !== null) {
+      var coName = coMatch[1];
+      var coType = coMatch[2];
+      var entry = {
+        name: coName,
+        euroWin: coMatch[3], euroDraw: coMatch[4], euroLoss: coMatch[5],
+        impliedHome: coMatch[6], impliedLine: coMatch[7], impliedAway: coMatch[8],
+        actualHome: coMatch[9], actualLine: coMatch[10], actualAway: coMatch[11],
+        ouLine: coMatch[13], ouOver: coMatch[12], ouUnder: coMatch[14]
+      };
+      if (coType === '初') {
+        coCurrent = { name: coName, initial: entry };
+        comparativeOdds.push(coCurrent);
+      } else if (coType === '即时' && coCurrent && coCurrent.name === coName) {
+        coCurrent.current = entry;
+      }
+    }
+    if (comparativeOdds.length > 0) result.comparativeOdds = comparativeOdds;
+
     // ---- 对赛往绩 & 近期战绩（文本解析）----
     // 每条记录行格式：类型 日期 主场 比分(半场) 角球 客场 ... 胜负 让球 进球数
     var parseMatchResultRows = function(sectionText) {

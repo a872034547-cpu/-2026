@@ -250,8 +250,27 @@ export class ReportGenerator {
     }
     sections.push('');
 
+    // ========== 欧转亚比较（欧赔隐含盘口 vs 实际亚盘）==========
+    if (analysis?.comparativeOdds?.length > 0) {
+      sections.push(`## 十、即时走势比较（欧赔 + 欧转亚盘 + 实际亚盘 + 大小球）`);
+      sections.push(`> 欧转亚盘=欧赔隐含的亚盘水位；若欧转亚与实际亚盘差距大，说明欧亚背离，是庄家信号`);
+      sections.push(`| 公司 | 类型 | 欧主 | 欧平 | 欧客 | 欧转亚主 | 欧转亚盘 | 欧转亚客 | 实际主 | 实际盘 | 实际客 | 大球水 | 线 | 小球水 |`);
+      sections.push(`|------|------|------|------|------|---------|---------|---------|------|------|------|------|---|------|`);
+      analysis.comparativeOdds.forEach(co => {
+        if (co.initial) {
+          const i = co.initial;
+          sections.push(`| ${co.name} | 初 | ${i.euroWin} | ${i.euroDraw} | ${i.euroLoss} | ${i.impliedHome} | ${i.impliedLine} | ${i.impliedAway} | ${i.actualHome} | ${i.actualLine} | ${i.actualAway} | ${i.ouOver} | ${i.ouLine} | ${i.ouUnder} |`);
+        }
+        if (co.current) {
+          const c = co.current;
+          sections.push(`| ${co.name} | 即时 | **${c.euroWin}** | **${c.euroDraw}** | **${c.euroLoss}** | ${c.impliedHome} | ${c.impliedLine} | ${c.impliedAway} | **${c.actualHome}** | **${c.actualLine}** | **${c.actualAway}** | ${c.ouOver} | ${c.ouLine} | ${c.ouUnder} |`);
+        }
+      });
+      sections.push('');
+    }
+
     // ========== 亚让盘口 ==========
-    sections.push(`## 十、亚让盘口`);
+    sections.push(`## 十一、亚让盘口`);
     if (asian && !asian.error) {
       const sum = asian.summary || {};
       sections.push(`**盘口动向**: 升盘 ${sum.up||0} 家 / 降盘 ${sum.down||0} 家 | 高水 ${sum.highWater||0} 家 / 低水 ${sum.lowWater||0} 家`);
@@ -292,7 +311,7 @@ export class ReportGenerator {
     sections.push('');
 
     // ========== 大小球 ==========
-    sections.push(`## 十一、大小球（进球数）`);
+    sections.push(`## 十二、大小球（进球数）`);
     if (overunder && !overunder.error) {
       const sum = overunder.summary || {};
       sections.push(`**盘口动向**: 升盘 ${sum.up||0} 家 / 降盘 ${sum.down||0} 家`);
@@ -335,7 +354,7 @@ export class ReportGenerator {
     sections.push('');
 
     // ========== 角球 ==========
-    sections.push(`## 十二、角球盘口`);
+    sections.push(`## 十三、角球盘口`);
     if (corner && !corner.error && corner.companies?.length > 0) {
       sections.push(`| 公司 | 初盘大 | 角球线 | 初盘小 | 即时大 | 即时线 | 即时小 |`);
       sections.push(`|------|--------|--------|--------|--------|--------|--------|`);
@@ -355,21 +374,21 @@ export class ReportGenerator {
       `| ${r.type} | ${r.date} | ${r.home} | ${r.score}(${r.halfScore}) | ${r.corners||'-'} | ${r.away} | ${r.result} | ${r.handicapResult} | ${r.ouResult} |`
     ).join('\n');
     if (analysis?.headToHead?.length > 0) {
-      sections.push(`## 十三、对赛往绩（近${analysis.headToHead.length}场）`);
+      sections.push(`## 十四、对赛往绩（近${analysis.headToHead.length}场）`);
       sections.push(`| 类型 | 日期 | 主场 | 比分(半) | 角球 | 客场 | 胜负 | 让球 | 大小 |`);
       sections.push(`|------|------|------|---------|------|------|------|------|------|`);
       sections.push(fmtMatchRows(analysis.headToHead));
       sections.push('');
     }
     if (analysis?.homeRecentMatches?.length > 0) {
-      sections.push(`## 十四、${home}近期战绩（近${analysis.homeRecentMatches.length}场）`);
+      sections.push(`## 十五、${home}近期战绩（近${analysis.homeRecentMatches.length}场）`);
       sections.push(`| 类型 | 日期 | 主场 | 比分(半) | 角球 | 客场 | 胜负 | 让球 | 大小 |`);
       sections.push(`|------|------|------|---------|------|------|------|------|------|`);
       sections.push(fmtMatchRows(analysis.homeRecentMatches));
       sections.push('');
     }
     if (analysis?.awayRecentMatches?.length > 0) {
-      sections.push(`## 十五、${away}近期战绩（近${analysis.awayRecentMatches.length}场）`);
+      sections.push(`## 十六、${away}近期战绩（近${analysis.awayRecentMatches.length}场）`);
       sections.push(`| 类型 | 日期 | 主场 | 比分(半) | 角球 | 客场 | 胜负 | 让球 | 大小 |`);
       sections.push(`|------|------|------|---------|------|------|------|------|------|`);
       sections.push(fmtMatchRows(analysis.awayRecentMatches));
