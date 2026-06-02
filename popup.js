@@ -495,12 +495,13 @@ async function runAIPredict() {
       // 自动解析并保存投注建议到战绩
       try {
         const stored = await sendMsg({ type: 'GET_STORED_DATA', matchId });
-        const mi = stored?.data?.analysis?.matchInfo || {};
+        const mi = stored?.data?.data?.analysis?.matchInfo || {};
         const today = new Date().toLocaleDateString('zh-CN');
         const betRecs = parseBetAdvicesFromAI(resp.prediction.content, { home: mi.home, away: mi.away, league: mi.league, time: mi.time }, matchId, today);
         if (betRecs.length) {
-          await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
-          showAlert(`✅ 已自动保存 ${betRecs.length} 条投注建议到战绩`, 'success', 3000);
+          const saveRes = await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
+          const dest = (saveRes?.mode === 'private' || saveRes?.mode === 'local') ? '本地私有记录' : '官方战绩';
+          showAlert(`✅ 已自动保存 ${betRecs.length} 条投注建议到${dest}`, 'success', 3000);
         }
       } catch(e) { console.warn('[BetSave]', e.message); }
     } else if (resp.error?.includes('API Key')) {
@@ -562,12 +563,13 @@ async function runDeepAIPredict() {
       // 自动解析并保存投注建议到战绩
       try {
         const stored = await sendMsg({ type: 'GET_STORED_DATA', matchId });
-        const mi = stored?.data?.analysis?.matchInfo || {};
+        const mi = stored?.data?.data?.analysis?.matchInfo || {};
         const today = new Date().toLocaleDateString('zh-CN');
         const betRecs = parseBetAdvicesFromAI(resp.prediction.content, { home: mi.home, away: mi.away, league: mi.league, time: mi.time }, matchId, today);
         if (betRecs.length) {
-          await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
-          showAlert(`✅ 已自动保存 ${betRecs.length} 条投注建议到战绩`, 'success', 3000);
+          const saveRes = await sendMsg({ type: 'SAVE_BET_RECORDS', betRecords: betRecs });
+          const dest = (saveRes?.mode === 'private' || saveRes?.mode === 'local') ? '本地私有记录' : '官方战绩';
+          showAlert(`✅ 已自动保存 ${betRecs.length} 条投注建议到${dest}`, 'success', 3000);
         }
       } catch(e) { console.warn('[BetSave]', e.message); }
     } else if (resp.error?.includes('API Key')) {
@@ -1491,10 +1493,13 @@ function renderDailyRecords() {
   const dateFilter = document.getElementById('recordsDateFilter').value;
   const resultFilter = document.getElementById('recordsResultFilter').value;
   const canManage = betRecordsMeta.canManageOfficialRecords !== false;
-  const isOfficialMode = betRecordsMeta.publicSyncEnabled;
+  const isOfficialMode = betRecordsMeta.mode === 'official';
+  const isPrivateMode = betRecordsMeta.mode === 'local' && betRecordsMeta.publicSyncEnabled;
   const modeText = isOfficialMode
     ? (canManage ? '官方战绩 · 管理员可维护' : '官方战绩 · 普通用户只读')
-    : '本地兼容模式';
+    : isPrivateMode
+      ? '📱 我的私有记录（本地）'
+      : '本地兼容模式';
   const verifyAllBtn = document.getElementById('verifyAllBtn');
   if (verifyAllBtn) {
     verifyAllBtn.disabled = !canManage;

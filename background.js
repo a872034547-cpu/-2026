@@ -436,10 +436,19 @@ async function handleMessage(msg, sender, sendResponse) {
 
       case 'GET_BET_RECORDS': {
         // 战绩Tab展示官方记录：公共同步开启时从 PHP 服务端读取；未开启时兼容旧本地模式。
-        // forceLocal=true：强制读取本地 bet_records，忽略服务器
+        // forceLocal=true：强制读取本地私有记录（普通用户自己的AI推荐）
         if (msg.forceLocal) {
-          const r = await chrome.storage.local.get('bet_records');
-          sendResponse({ records: r.bet_records || [], publicSyncEnabled: false, canManageOfficialRecords: true, isAdmin: true, mode: 'local' });
+          const permission = await officialRecordPermission();
+          // 公共同步开启时，本地tab显示普通用户私有记录；未开启时读旧 bet_records
+          const storageKey = permission.publicSyncEnabled ? 'private_bet_records' : 'bet_records';
+          const r = await chrome.storage.local.get(storageKey);
+          sendResponse({
+            records: r[storageKey] || [],
+            publicSyncEnabled: permission.publicSyncEnabled,
+            canManageOfficialRecords: permission.canManage,
+            isAdmin: permission.isAdmin,
+            mode: 'local'
+          });
         } else {
           const result = await getOfficialBetRecords();
           sendResponse(result);
