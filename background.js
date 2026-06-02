@@ -320,19 +320,28 @@ async function handleMessage(msg, sender, sendResponse) {
       }
 
       case 'LOAD_SERVER_MATCHES': {
-        // 从服务器加载今日比赛完整列表（含 data_json），供普通用户直接展示
+        // 从服务器加载今日/明日比赛完整列表（含 data_json），供普通用户直接展示
         try {
           const settings = await getPublicSyncSettings();
           if (!settings.enabled) { sendResponse({ ok: false, serverEnabled: false, matches: [] }); break; }
-          const json = await publicApi('match.list', { settings, params: { limit: '200' } });
-          const matches = (json.matches || []).map(m => ({
-            matchId: String(m.matchId),
-            home: m.home || '',
-            away: m.away || '',
-            league: m.league || '',
-            matchTime: m.matchTime || '',
-            data: m.data || null
-          }));
+          // 取今天和明天日期前缀（UTC+8）
+          const now = new Date(Date.now() + 8 * 3600000);
+          const today = now.toISOString().slice(0, 10);
+          const tomorrow = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
+          const json = await publicApi('match.list', { settings, params: { limit: '500' } });
+          const matches = (json.matches || [])
+            .filter(m => {
+              const t = (m.matchTime || '').slice(0, 10);
+              return t === today || t === tomorrow;
+            })
+            .map(m => ({
+              matchId: String(m.matchId),
+              home: m.home || '',
+              away: m.away || '',
+              league: m.league || '',
+              matchTime: m.matchTime || '',
+              data: m.data || null
+            }));
           sendResponse({ ok: true, serverEnabled: true, matches });
         } catch (e) {
           sendResponse({ ok: false, error: e.message, matches: [] });
