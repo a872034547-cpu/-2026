@@ -2659,71 +2659,201 @@ function calcLiveSuggestions(live) {
   const isRunning = /进行中/.test(status) || minute > 0;
   if (!isRunning && !isHalf) return suggestions;
 
-  const num = v => parseFloat(String(v || '0').replace('%', ''));
+  const num = v => parseFloat(String(v || '0').replace('%', '')) || 0;
   const ms = matchStats || {};
   const rs = recentStats || {};
-  const homeShot = num(ms.shot?.home); const awayShot = num(ms.shot?.away);
-  const homeShotOn = num(ms.shotOn?.home); const awayShotOn = num(ms.shotOn?.away);
-  const homeDanger = num(ms.dangerAttack?.home); const awayDanger = num(ms.dangerAttack?.away);
-  const homeCorner = num(ms.corner?.home); const awayCorner = num(ms.corner?.away);
-  const homePoss = num(ms.possession?.home); const awayPoss = num(ms.possession?.away);
 
-  // 近期场均进球
-  const homeAvgGoal = num(rs.home?.['进球']?.n3);
-  const awayAvgGoal = num(rs.away?.['进球']?.n3);
+  // ── 技术统计 ──
+  const homeShot     = num(ms.shot?.home),     awayShot     = num(ms.shot?.away);
+  const homeShotOn   = num(ms.shotOn?.home),   awayShotOn   = num(ms.shotOn?.away);
+  const homeDanger   = num(ms.dangerAttack?.home), awayDanger = num(ms.dangerAttack?.away);
+  const homeCorner   = num(ms.corner?.home),   awayCorner   = num(ms.corner?.away);
+  const homePoss     = num(ms.possession?.home);
+
+  // ── 近期场均（近3场） ──
+  const homeAvgGoal    = num(rs.home?.['进球']?.n3);
+  const awayAvgGoal    = num(rs.away?.['进球']?.n3);
   const homeAvgConcede = num(rs.home?.['失球']?.n3);
   const awayAvgConcede = num(rs.away?.['失球']?.n3);
-  const homeAvgCorner = num(rs.home?.['角球']?.n3);
-  const awayAvgCorner = num(rs.away?.['角球']?.n3);
+  const homeAvgCorner  = num(rs.home?.['角球']?.n3);
+  const awayAvgCorner  = num(rs.away?.['角球']?.n3);
 
-  // -- 1. 大球（下半场补单）--
-  if (minute >= 46 && minute <= 70 && totalGoals === 0) {
-    const avgGoal = (homeAvgGoal + awayAvgGoal + homeAvgConcede + awayAvgConcede) / 4;
-    const lateGoalRate = (num(goalTiming?.t46_60?.homeGoal) + num(goalTiming?.t61_75?.homeGoal) +
-      num(goalTiming?.t76_90?.homeGoal) + num(goalTiming?.t46_60?.awayGoal) +
-      num(goalTiming?.t61_75?.awayGoal) + num(goalTiming?.t76_90?.awayGoal)) / 6;
-    if (avgGoal >= 1.0 && lateGoalRate >= 10) {
-      suggestions.push({ type: 'ou', signal: '⬆大球', title: `${minute}'下半场补大球`, confidence: Math.min(85, 55 + lateGoalRate), reason: `0-0进行到${minute}分，下半场进球率${lateGoalRate.toFixed(0)}%，双队近期场均进球${avgGoal.toFixed(1)}，大球补单价值高` });
-    }
-  }
+  // ── 盘口信息 ──
+  const curLine   = asianLive?.handicap || '';   // 即时亚盘盘口
+  const curHW     = num(asianLive?.homeWater);   // 即时主水
+  const curAW     = num(asianLive?.awayWater);   // 即时客水
+  const ouLine    = num(ouLive?.line);            // 即时大小球线
+  const ouOver    = num(ouLive?.overWater);       // 即时大球水
+  const ouUnder   = num(ouLive?.underWater);      // 即时小球水
 
-  // -- 2. 角球大（攻势明显）--
-  const totalCornerMatch = homeCorner + awayCorner;
+  // ── 压力指数（Pressure Index）──
+  // 危险进攻权重1，射正权重2，射门权重1
+  const homePressureRaw = homeDanger + homeShotOn * 2 + homeShot;
+  const awayPressureRaw = awayDanger + awayShotOn * 2 + awayShot;
+  const totalPressure   = homePressureRaw + awayPressureRaw || 1;
+  const homePressurePct = (homePressureRaw / totalPressure) * 100;
+  const awayPressurePct = 100 - homePressurePct;
+  const dominantSide    = homePressurePct >= 66 ? 'home' : (awayPressurePct >= 66 ? 'away' : null);
+
+  // ── 角球速率 ──
+  const totalCorner  = homeCorner + awayCorner;
+  const cornerRate90 = minute > 0 ? (totalCorner / minute) * 90 : 0;
   const avgCornerTotal = homeAvgCorner + awayAvgCorner;
-  if (isRunning && minute >= 20 && totalCornerMatch >= avgCornerTotal * 0.7 && avgCornerTotal >= 8) {
-    const pace = (totalCornerMatch / Math.max(minute, 1)) * 90;
-    if (pace >= 10) {
-      suggestions.push({ type: 'corner', signal: '⬆角球大', title: `角球大补单 (预计${pace.toFixed(0)}个/90分)`, confidence: Math.min(80, 50 + (pace - 10) * 3), reason: `${minute}'已${totalCornerMatch}角球，推算全场约${pace.toFixed(0)}个，超出近期场均${avgCornerTotal.toFixed(1)}` });
+
+  // ── 大小球水位信号（大球水 < 小球水 → 庄家偏向有球）──
+  // 亚盘水位：低水=庄家看好 / 大球水<小球水 → 庄家预期进球
+  const ouSignalBig   = ouOver > 0 && ouUnder > 0 && ouOver < ouUnder;  // 大球水低=庄家预期进球
+  const ouSignalSmall = ouOver > 0 && ouUnder > 0 && ouUnder < ouOver;  // 小球水低=庄家预期无球
+
+  // ── 亚盘水位方向（主水 vs 客水，低水=庄家看好该队）──
+  const asianFavorHome = curHW > 0 && curAW > 0 && curHW < curAW;  // 主水低=庄家看好主队
+  const asianFavorAway = curHW > 0 && curAW > 0 && curAW < curHW;  // 客水低=庄家看好客队
+  const asianFavorSide = asianFavorHome ? 'home' : (asianFavorAway ? 'away' : null);
+
+  // ── 进失球时段概率 ──
+  const gt = goalTiming || {};
+  const timingGoalRate = (seg) => (num(gt[seg]?.homeGoal) + num(gt[seg]?.awayGoal)) / 2;
+  const currentSegRate = minute <= 15 ? timingGoalRate('t1_15')
+    : minute <= 30 ? timingGoalRate('t16_30')
+    : minute <= 45 ? timingGoalRate('t31_45')
+    : minute <= 60 ? timingGoalRate('t46_60')
+    : minute <= 75 ? timingGoalRate('t61_75')
+    : timingGoalRate('t76_90');
+  // 高危进球段（31-45 / 76-90）
+  const isHighGoalWindow = (minute >= 31 && minute <= 45) || (minute >= 76 && minute <= 90);
+
+  // ════════════════════════════════════════════
+  // 场景1：压力指数 ≥ 66% — 单边压制进球
+  // ════════════════════════════════════════════
+  if (dominantSide && minute >= 25 && minute <= 80) {
+    const label     = dominantSide === 'home' ? '主队' : '客队';
+    const pressPct  = dominantSide === 'home' ? homePressurePct : awayPressurePct;
+    const shotOn    = dominantSide === 'home' ? homeShotOn : awayShotOn;
+    const danger    = dominantSide === 'home' ? homeDanger : awayDanger;
+    // 若盘口方向也支持该队：信心 +10
+    const bookBonus = (asianFavorSide === dominantSide) ? 10 : 0;
+    const conf      = Math.min(88, 58 + bookBonus + (pressPct - 66) * 0.8);
+    const bookNote  = bookBonus > 0 ? `，庄家水位也偏向${label}（低水${dominantSide==='home'?curHW:curAW}）` : '';
+    suggestions.push({
+      type: 'asian', signal: `⚡压制${label}`,
+      title: `${minute}' ${label}压力指数${pressPct.toFixed(0)}%，补${label}进球/让球`,
+      confidence: Math.round(conf),
+      reason: `${label}危险进攻${danger}次，射正${shotOn}次，压力指数${pressPct.toFixed(0)}%（≥66%为显著压制）${bookNote}`,
+    });
+  }
+
+  // ════════════════════════════════════════════
+  // 场景2：庄家水位异动 → 大球信号（水位升 = 庄家预期无球 vs 降 = 庄家预期有球）
+  // ════════════════════════════════════════════
+  if (ouLine > 0 && minute >= 20) {
+    if (ouSignalBig && totalGoals === 0) {
+      // 大球水偏低 + 无进球 = 庄家预期本场有球，值得跟
+      const conf = Math.min(82, 60 + (ouUnder - ouOver) * 5);
+      suggestions.push({
+        type: 'ou', signal: '📉大球水低',
+        title: `${minute}' 大球水${ouOver} < 小球水${ouUnder}，庄家偏向有球`,
+        confidence: Math.round(conf),
+        reason: `即时大球水${ouOver} < 小球水${ouUnder}，低水代表庄家预期有球，${totalGoals === 0 ? '目前0-0，' : ''}盘线${ouLine}，跟大球`,
+      });
+    }
+    if (ouSignalSmall && totalGoals >= 2) {
+      // 小球水偏低 + 已有≥2球 = 庄家预期不再进球
+      const conf = Math.min(78, 55 + (ouOver - ouUnder) * 5);
+      suggestions.push({
+        type: 'ou', signal: '📈小球水低',
+        title: `${minute}' 小球水${ouUnder} < 大球水${ouOver}，庄家偏向无更多球`,
+        confidence: Math.round(conf),
+        reason: `已${totalGoals}球，即时小球水${ouUnder} < 大球水${ouOver}，庄家预期不再进球，考虑补小球（${ouLine}以下）`,
+      });
     }
   }
 
-  // -- 3. 半场进球（上半场最后15分钟）--
-  if (minute >= 31 && minute <= 45 && totalGoals === 0) {
-    const halfLateRate = (num(goalTiming?.t31_45?.homeGoal) + num(goalTiming?.t31_45?.awayGoal)) / 2;
-    if (halfLateRate >= 20) {
-      suggestions.push({ type: 'half', signal: '⚽半场进球', title: `${minute}'补半场有进球`, confidence: Math.min(78, 50 + halfLateRate), reason: `0-0进行到${minute}分，历史31~45分进球率约${halfLateRate.toFixed(0)}%，适合补半场进球` });
+  // ════════════════════════════════════════════
+  // 场景3：下半场 0-0 大球补单（时间窗口 46-70 分钟）
+  // ════════════════════════════════════════════
+  if (minute >= 46 && minute <= 70 && totalGoals === 0) {
+    const avgExpected = (homeAvgGoal + awayAvgGoal + homeAvgConcede + awayAvgConcede) / 4;
+    const lateRate    = (timingGoalRate('t46_60') + timingGoalRate('t61_75') + timingGoalRate('t76_90')) / 3;
+    if (avgExpected >= 1.0 || lateRate >= 15 || ouSignalBig) {
+      const conf = Math.min(85, 52
+        + (avgExpected >= 1.5 ? 10 : avgExpected >= 1.0 ? 5 : 0)
+        + (lateRate >= 20 ? 10 : lateRate >= 15 ? 5 : 0)
+        + (ouSignalBig ? 8 : 0));
+      suggestions.push({
+        type: 'ou', signal: '⬆下半大球',
+        title: `${minute}' 0-0补大球 (${ouLine || '?'})`,
+        confidence: conf,
+        reason: `下半场${minute}分仍0-0，双队近期场均进/失球${avgExpected.toFixed(1)}，历史下半场进球率${lateRate.toFixed(0)}%${ouSignalBig ? `，大球水(${ouOver})<小球水(${ouUnder})庄家看好有球` : ''}`,
+      });
     }
   }
 
-  // -- 4. 强势一方让球（单边压制）--
-  if (isRunning && minute >= 30 && minute <= 75) {
-    const homePressure = homeDanger + homeShotOn * 2 + homeShot;
-    const awayPressure = awayDanger + awayShotOn * 2 + awayShot;
-    const dominant = homePressure > awayPressure * 1.5 ? 'home' : (awayPressure > homePressure * 1.5 ? 'away' : null);
-    const asianHcp = asianLive?.handicap || '';
-    if (dominant && asianHcp) {
-      const dominantLabel = dominant === 'home' ? '主队' : '客队';
-      suggestions.push({ type: 'asian', signal: dominant === 'home' ? '⬇主让' : '⬆客胜', title: `${dominantLabel}压制明显，盘口${asianHcp}`, confidence: 65, reason: `${minute}分钟${dominantLabel}射门${dominant==='home'?homeShot:awayShot}次/射正${dominant==='home'?homeShotOn:awayShotOn}次/危险进攻${dominant==='home'?homeDanger:awayDanger}次，占据明显优势` });
+  // ════════════════════════════════════════════
+  // 场景4：高危时段进球（31-45 / 76-90 分钟）
+  // ════════════════════════════════════════════
+  if (isHighGoalWindow && currentSegRate >= 18) {
+    const segLabel = minute <= 45 ? '31~45分' : '76~90分';
+    const conf     = Math.min(80, 50 + currentSegRate);
+    suggestions.push({
+      type: 'goal', signal: '⏰高危时段',
+      title: `${minute}' 处于${segLabel}高概率进球段`,
+      confidence: Math.round(conf),
+      reason: `当前处于${segLabel}，历史该段进球率${currentSegRate.toFixed(0)}%（≥18%为高危段），${totalGoals === 0 ? '0-0攻势更集中' : `${totalGoals}球已入`}，补单价值窗口`,
+    });
+  }
+
+  // ════════════════════════════════════════════
+  // 场景5：角球速率超越历史均值（角球大）
+  // ════════════════════════════════════════════
+  if (minute >= 20 && cornerRate90 > 0 && avgCornerTotal > 0) {
+    const excessRate = cornerRate90 / avgCornerTotal;
+    if (cornerRate90 >= 11 || (excessRate >= 1.3 && cornerRate90 >= 9)) {
+      const conf = Math.min(80, 50 + (cornerRate90 - 9) * 2.5);
+      suggestions.push({
+        type: 'corner', signal: '🚩角球速率高',
+        title: `${minute}' 角球速率${cornerRate90.toFixed(1)}/90，预计超盘`,
+        confidence: Math.round(conf),
+        reason: `${minute}分已${totalCorner}角球，推算全场${cornerRate90.toFixed(1)}个，双队近期场均${avgCornerTotal.toFixed(1)}个，速率超出${((excessRate-1)*100).toFixed(0)}%，角球大有价值`,
+      });
     }
   }
 
-  // -- 5. 开球队/攻势强队补单（下半场有进球压力）--
-  if (minute >= 60 && minute <= 80 && Math.abs(homeGoals - awayGoals) >= 1) {
-    const losingTeam = homeGoals < awayGoals ? 'home' : 'away';
-    const losingConcede = losingTeam === 'home' ? awayAvgGoal : homeAvgGoal;
-    if (losingConcede >= 1.2) {
-      const label = losingTeam === 'home' ? '主队' : '客队';
-      suggestions.push({ type: 'goal', signal: '⚽追球进球', title: `${minute}'${label}追球压力进球`, confidence: 62, reason: `${label}落后1球，对手近期场均进${losingConcede.toFixed(1)}球，追球阶段攻势加强，有进球概率` });
+  // ════════════════════════════════════════════
+  // 场景6：追球压力（落后1球 + 攻方近期强）
+  // ════════════════════════════════════════════
+  if (minute >= 60 && minute <= 85 && Math.abs(homeGoals - awayGoals) === 1) {
+    const losingTeam   = homeGoals < awayGoals ? 'home' : 'away';
+    const losingAvgG   = losingTeam === 'home' ? homeAvgGoal : awayAvgGoal;
+    const losingPressP = losingTeam === 'home' ? homePressurePct : awayPressurePct;
+    const losingLabel  = losingTeam === 'home' ? '主队' : '客队';
+    if (losingAvgG >= 1.2 || losingPressP >= 55) {
+      const conf = Math.min(75, 48
+        + (losingAvgG >= 1.5 ? 10 : losingAvgG >= 1.2 ? 5 : 0)
+        + (losingPressP >= 60 ? 10 : losingPressP >= 55 ? 5 : 0));
+      suggestions.push({
+        type: 'goal', signal: '🔥追球进球',
+        title: `${minute}' ${losingLabel}落后1球强追，补大球/进球`,
+        confidence: conf,
+        reason: `${losingLabel}落后1球，近期场均进球${losingAvgG.toFixed(1)}，当前压力指数${losingPressP.toFixed(0)}%，攻势强劲阶段概率高`,
+      });
+    }
+  }
+
+  // ════════════════════════════════════════════
+  // 场景7：中场休息 0-0 复盘信号
+  // ════════════════════════════════════════════
+  if (isHalf && totalGoals === 0) {
+    const halfHighPress = Math.max(homePressurePct, awayPressurePct) >= 60;
+    const halfOuBig    = ouSignalBig;
+    if (halfHighPress || halfOuBig) {
+      const label = homePressurePct >= awayPressurePct ? '主队' : '客队';
+      const conf  = Math.min(78, 52 + (halfHighPress ? 10 : 0) + (halfOuBig ? 10 : 0));
+      suggestions.push({
+        type: 'ou', signal: '⏸️中场大球',
+        title: `中场0-0，下半场补大球 (${ouLine || '?'})`,
+        confidence: conf,
+        reason: `上半场0-0，${halfHighPress ? `${label}压力指数${Math.max(homePressurePct,awayPressurePct).toFixed(0)}%` : ''}${halfOuBig ? `，大球水(${ouOver})<小球水(${ouUnder})` : ''}，下半场进球概率高`,
+      });
     }
   }
 
