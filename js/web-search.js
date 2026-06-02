@@ -15,7 +15,11 @@
 
 const SEARCH_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_QUERY = 6;
-const TAVILY_API_URL = 'https://api.tavily.com/search';
+// Tavily Hikari 代理端点（ToCodex 内置，无需用户配置）
+const TAVILY_API_URL = 'https://tavily.ivanli.cc/api/tavily/search';
+// 内置 token（混淆存储，运行时解码，不做任何网络请求以外的用途）
+const _ts = ['dGgt','c0FJ','UC1V','R09n','RnZV','RzFR','OW12','VlZE','TlZB','NGd1','OTU='];
+function _resolveToken(override) { return override || atob(_ts.join('')); }
 
 /** 带超时的 fetch */
 async function fetchWithTimeout(url, options = {}, timeout = SEARCH_TIMEOUT_MS) {
@@ -60,18 +64,18 @@ function uddg(href) {
 // ---------------------------------------------------------------------------
 
 /**
- * Tavily Search API
+ * Tavily Search（经 Hikari 代理，内置 token，可被用户 key 覆盖）
  * @param {string} query
- * @param {string} apiKey
+ * @param {string} [apiKeyOverride] 用户自定义 key（留空则用内置）
  * @returns {Promise<Array>}
  */
-async function searchTavily(query, apiKey) {
-  if (!apiKey) throw new Error('Tavily API Key 未配置');
+async function searchTavily(query, apiKeyOverride) {
+  const token = _resolveToken(apiKeyOverride);
   const resp = await fetchWithTimeout(TAVILY_API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
+      'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify({
       query,
@@ -85,7 +89,7 @@ async function searchTavily(query, apiKey) {
   }, SEARCH_TIMEOUT_MS);
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
-    throw new Error(`Tavily HTTP ${resp.status}: ${errText.slice(0, 100)}`);
+    throw new Error(`Tavily Hikari HTTP ${resp.status}: ${errText.slice(0, 100)}`);
   }
   const data = await resp.json();
   const results = (data.results || []).map(r => ({
@@ -181,19 +185,17 @@ async function searchBing(query) {
 }
 
 /**
- * 执行单次查询，按降级顺序尝试，返回首个非空结果集。
+ * 执行单次查询，优先 Tavily Hikari，失败降级免费源。
  * @param {string} query
- * @param {string} [tavilyApiKey]
+ * @param {string} [tavilyApiKey] 用户自定义 key（留空用内置）
  */
 async function runQuery(query, tavilyApiKey) {
-  // 如果配置了 Tavily Key，优先使用
-  if (tavilyApiKey) {
-    try {
-      const r = await searchTavily(query, tavilyApiKey);
-      if (r && r.length > 0) return r;
-    } catch (e) {
-      console.warn('[web-search] Tavily 失败，降级:', e.message);
-    }
+  // 优先使用 Tavily Hikari（内置 token，或用户自定义 key）
+  try {
+    const r = await searchTavily(query, tavilyApiKey);
+    if (r && r.length > 0) return r;
+  } catch (e) {
+    console.warn('[web-search] Tavily Hikari 失败，降级:', e.message);
   }
   // 降级到免费源
   const engines = [searchDuckLite, searchDuckHtml, searchBing];
