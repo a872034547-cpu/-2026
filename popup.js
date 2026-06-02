@@ -1827,6 +1827,29 @@ function renderLiveData(matchId, liveData) {
     html += `</div></div></div>`;
   }
 
+  // 滚球建议面板
+  const suggestions = liveData.suggestions || [];
+  if (suggestions.length > 0) {
+    const confColor = c => c >= 75 ? '#3fb950' : c >= 60 ? '#f0883e' : '#8b949e';
+    html += `<div class="data-section" style="border:1px solid #238636;background:#0d2318">
+      <div class="section-header" style="color:#3fb950">💡 滚球补单建议方案（按信心度排序）</div>
+      <div class="section-body">`;
+    suggestions.forEach(s => {
+      html += `<div style="margin-bottom:10px;padding:8px;background:#0d1117;border-radius:6px;border-left:3px solid ${confColor(s.confidence)}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="color:${confColor(s.confidence)};font-weight:700;font-size:13px">${escapeHtml(s.signal)}</span>
+          <span style="font-size:12px;color:#e6edf3">${escapeHtml(s.title)}</span>
+          <span style="margin-left:auto;font-size:11px;color:${confColor(s.confidence)};font-weight:700">${s.confidence}%</span>
+        </div>
+        <div style="font-size:11px;color:#8b949e;line-height:1.5">${escapeHtml(s.reason)}</div>
+      </div>`;
+    });
+    html += `<div style="font-size:10px;color:#484f58;margin-top:4px">⚠️ 以上建议基于当前实时数据的统计概率，仅供参考，请结合盘口走势自行判断。</div>
+      </div></div>`;
+  } else {
+    html += `<div class="data-section"><div class="section-body" style="color:#8b949e;font-size:11px;padding:8px">暂无滚球建议（比赛未开始或数据不足）</div></div>`;
+  }
+
   // 插入到数据面板
   const dataEl = document.getElementById('dataContent');
   dataEl.innerHTML = html + (dataEl.innerHTML || '');

@@ -246,6 +246,7 @@ async function handleMessage(msg, sender, sendResponse) {
         const { matchId } = msg;
         const liveData = await collectLiveData(matchId);
         if (liveData) {
+          liveData.suggestions = calcLiveSuggestions(liveData);
           await chrome.storage.local.set({ [`live_${matchId}`]: { matchId, fetchTime: Date.now(), data: liveData } });
           sendResponse({ ok: true, data: liveData });
         } else {
@@ -2619,10 +2620,114 @@ function extractPageData(dataType) {
       });
     });
 
+    // ---------- 进失球时段概率（近30场） ----------
+    // 格式: 9% 14% 1~15 10% 14%  (主进 主失 时段 客进 客失)
+    const timingDefs = [
+      { label: '1~15', key: 't1_15' }, { label: '16~30', key: 't16_30' },
+      { label: '31~45', key: 't31_45' }, { label: '46~60', key: 't46_60' },
+      { label: '61~75', key: 't61_75' }, { label: '76~90', key: 't76_90' },
+      { label: '90+', key: 't90plus' }
+    ];
+    timingDefs.forEach(({ label, key }) => {
+      const re = new RegExp('(\\d+)%\\s+(\\d+)%\\s+' + label.replace('+', '\\+').replace('~', '[~\\-]') + '\\s+(\\d+)%\\s+(\\d+)%');
+      const m = text.match(re);
+      if (m) result.goalTiming[key] = { label, homeGoal: +m[1], homeConcede: +m[2], awayGoal: +m[3], awayConcede: +m[4] };
+    });
+
     result._fetchTime = Date.now();
     result._textLen = text.length;
     return result;
   }
+}
+
+// ===== 滚球建议引擎 =====
+/**
+ * 基于实时数据计算滚球补单建议
+ * @param {object} live - extractLiveData 返回结果
+ * @returns {Array} 建议列表 [{type, title, reason, confidence, signal}]
+ */
+function calcLiveSuggestions(live) {
+  const suggestions = [];
+  if (!live) return suggestions;
+  const { liveScore, matchStats, recentStats, goalTiming, asianLive, ouLive } = live;
+  const minute = liveScore?.minute || 0;
+  const homeGoals = liveScore?.home ?? 0;
+  const awayGoals = liveScore?.away ?? 0;
+  const totalGoals = homeGoals + awayGoals;
+  const status = liveScore?.status || '';
+  const isHalf = /中场/.test(status);
+  const isRunning = /进行中/.test(status) || minute > 0;
+  if (!isRunning && !isHalf) return suggestions;
+
+  const num = v => parseFloat(String(v || '0').replace('%', ''));
+  const ms = matchStats || {};
+  const rs = recentStats || {};
+  const homeShot = num(ms.shot?.home); const awayShot = num(ms.shot?.away);
+  const homeShotOn = num(ms.shotOn?.home); const awayShotOn = num(ms.shotOn?.away);
+  const homeDanger = num(ms.dangerAttack?.home); const awayDanger = num(ms.dangerAttack?.away);
+  const homeCorner = num(ms.corner?.home); const awayCorner = num(ms.corner?.away);
+  const homePoss = num(ms.possession?.home); const awayPoss = num(ms.possession?.away);
+
+  // 近期场均进球
+  const homeAvgGoal = num(rs.home?.['进球']?.n3);
+  const awayAvgGoal = num(rs.away?.['进球']?.n3);
+  const homeAvgConcede = num(rs.home?.['失球']?.n3);
+  const awayAvgConcede = num(rs.away?.['失球']?.n3);
+  const homeAvgCorner = num(rs.home?.['角球']?.n3);
+  const awayAvgCorner = num(rs.away?.['角球']?.n3);
+
+  // -- 1. 大球（下半场补单）--
+  if (minute >= 46 && minute <= 70 && totalGoals === 0) {
+    const avgGoal = (homeAvgGoal + awayAvgGoal + homeAvgConcede + awayAvgConcede) / 4;
+    const lateGoalRate = (num(goalTiming?.t46_60?.homeGoal) + num(goalTiming?.t61_75?.homeGoal) +
+      num(goalTiming?.t76_90?.homeGoal) + num(goalTiming?.t46_60?.awayGoal) +
+      num(goalTiming?.t61_75?.awayGoal) + num(goalTiming?.t76_90?.awayGoal)) / 6;
+    if (avgGoal >= 1.0 && lateGoalRate >= 10) {
+      suggestions.push({ type: 'ou', signal: '⬆大球', title: `${minute}'下半场补大球`, confidence: Math.min(85, 55 + lateGoalRate), reason: `0-0进行到${minute}分，下半场进球率${lateGoalRate.toFixed(0)}%，双队近期场均进球${avgGoal.toFixed(1)}，大球补单价值高` });
+    }
+  }
+
+  // -- 2. 角球大（攻势明显）--
+  const totalCornerMatch = homeCorner + awayCorner;
+  const avgCornerTotal = homeAvgCorner + awayAvgCorner;
+  if (isRunning && minute >= 20 && totalCornerMatch >= avgCornerTotal * 0.7 && avgCornerTotal >= 8) {
+    const pace = (totalCornerMatch / Math.max(minute, 1)) * 90;
+    if (pace >= 10) {
+      suggestions.push({ type: 'corner', signal: '⬆角球大', title: `角球大补单 (预计${pace.toFixed(0)}个/90分)`, confidence: Math.min(80, 50 + (pace - 10) * 3), reason: `${minute}'已${totalCornerMatch}角球，推算全场约${pace.toFixed(0)}个，超出近期场均${avgCornerTotal.toFixed(1)}` });
+    }
+  }
+
+  // -- 3. 半场进球（上半场最后15分钟）--
+  if (minute >= 31 && minute <= 45 && totalGoals === 0) {
+    const halfLateRate = (num(goalTiming?.t31_45?.homeGoal) + num(goalTiming?.t31_45?.awayGoal)) / 2;
+    if (halfLateRate >= 20) {
+      suggestions.push({ type: 'half', signal: '⚽半场进球', title: `${minute}'补半场有进球`, confidence: Math.min(78, 50 + halfLateRate), reason: `0-0进行到${minute}分，历史31~45分进球率约${halfLateRate.toFixed(0)}%，适合补半场进球` });
+    }
+  }
+
+  // -- 4. 强势一方让球（单边压制）--
+  if (isRunning && minute >= 30 && minute <= 75) {
+    const homePressure = homeDanger + homeShotOn * 2 + homeShot;
+    const awayPressure = awayDanger + awayShotOn * 2 + awayShot;
+    const dominant = homePressure > awayPressure * 1.5 ? 'home' : (awayPressure > homePressure * 1.5 ? 'away' : null);
+    const asianHcp = asianLive?.handicap || '';
+    if (dominant && asianHcp) {
+      const dominantLabel = dominant === 'home' ? '主队' : '客队';
+      suggestions.push({ type: 'asian', signal: dominant === 'home' ? '⬇主让' : '⬆客胜', title: `${dominantLabel}压制明显，盘口${asianHcp}`, confidence: 65, reason: `${minute}分钟${dominantLabel}射门${dominant==='home'?homeShot:awayShot}次/射正${dominant==='home'?homeShotOn:awayShotOn}次/危险进攻${dominant==='home'?homeDanger:awayDanger}次，占据明显优势` });
+    }
+  }
+
+  // -- 5. 开球队/攻势强队补单（下半场有进球压力）--
+  if (minute >= 60 && minute <= 80 && Math.abs(homeGoals - awayGoals) >= 1) {
+    const losingTeam = homeGoals < awayGoals ? 'home' : 'away';
+    const losingConcede = losingTeam === 'home' ? awayAvgGoal : homeAvgGoal;
+    if (losingConcede >= 1.2) {
+      const label = losingTeam === 'home' ? '主队' : '客队';
+      suggestions.push({ type: 'goal', signal: '⚽追球进球', title: `${minute}'${label}追球压力进球`, confidence: 62, reason: `${label}落后1球，对手近期场均进${losingConcede.toFixed(1)}球，追球阶段攻势加强，有进球概率` });
+    }
+  }
+
+  return suggestions.sort((a, b) => b.confidence - a.confidence);
 }
 
 // ===== 深度预测编排 (2.0) =====
