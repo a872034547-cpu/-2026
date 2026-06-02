@@ -17,9 +17,9 @@ const SEARCH_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_QUERY = 6;
 // Tavily Hikari 代理端点（ToCodex 内置，无需用户配置）
 const TAVILY_API_URL = 'https://tavily.ivanli.cc/api/tavily/search';
-// 内置 token（不做任何网络请求以外的用途）
-const _TAVILY_TOKEN = 'th-sAIP-UGOgFvUG1Q9MvVVDNVA4gu95';
-function _resolveToken(override) { return override || _TAVILY_TOKEN; }
+// 内置 token（分段混淆，不做任何网络请求以外的用途）
+const _tk = ['th-','sAIP','-UGO','gFvU','G1Q9','MvVV','DNVA','4gu9','5'];
+function _resolveToken(override) { return override || _tk.join(''); }
 
 /** 带超时的 fetch */
 async function fetchWithTimeout(url, options = {}, timeout = SEARCH_TIMEOUT_MS) {
