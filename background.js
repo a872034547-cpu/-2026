@@ -328,7 +328,7 @@ async function handleMessage(msg, sender, sendResponse) {
           const now = new Date(Date.now() + 8 * 3600000);
           const today = now.toISOString().slice(0, 10);
           const tomorrow = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
-          const json = await publicApi('match.list', { settings, params: { limit: '500' } });
+          const json = await publicApi('match.list', { settings, params: { limit: '500', includeData: '1' } });
           const matches = (json.matches || [])
             .filter(m => {
               const t = (m.matchTime || '').slice(0, 10);
