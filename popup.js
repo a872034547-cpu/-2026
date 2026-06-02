@@ -956,18 +956,32 @@ async function fetchTodayMatches() {
       showAlert('未获取到今日比赛。提示：请确保已登录球探网，或手动打开 live.titan007.com 后重试', 'warn', 8000);
       return;
     }
-    todayMatchItems = resp.matches.map(m => ({ match: m, matchData: null, profitability: null, checked: false }));
-    showAlert(`✅ 获取到 ${resp.matches.length} 场比赛，可勾选后点"采集选中"，或等待自动采集...`, 'success', 5000);
+    // 过滤已结束比赛（有比分且状态为finished），这些场次无需采集盘口
+    const allMatches = resp.matches;
+    const finishedMatches = allMatches.filter(m => m.status === 'finished' || (m.score && /^\d+[-:]\d+$/.test(m.score.trim())));
+    const upcomingMatches = allMatches.filter(m => !finishedMatches.includes(m));
+    todayMatchItems = allMatches.map(m => ({ match: m, matchData: null, profitability: null, checked: false }));
+
+    const finishedTip = finishedMatches.length > 0
+      ? `（已过滤 ${finishedMatches.length} 场已结束比赛，仅显示未开场/进行中）`
+      : '';
+    showAlert(`✅ 获取到 ${allMatches.length} 场比赛${finishedTip}，可勾选后点"采集选中"，或等待自动采集...`, 'success', 6000);
     renderDailyList();
     switchTab('daily');
     document.getElementById('collectSelectedBtn').style.display = 'inline-flex';
 
-    // 逐场自动采集盘口数据
+    // 逐场自动采集盘口数据（跳过已结束比赛）
     let doneCount = 0;
+    let skippedFinished = 0;
     for (let i = 0; i < todayMatchItems.length; i++) {
       if (collectAborted) break;
       const item = todayMatchItems[i];
       if (item.matchData) continue; // 已采集跳过
+      // 跳过已结束比赛，无需采集盘口
+      if (item.match.status === 'finished' || (item.match.score && /^\d+[-:]\d+$/.test(item.match.score.trim()))) {
+        skippedFinished++;
+        continue;
+      }
       try {
         const dataResp = await sendMsg({ type: 'FETCH_MATCH_QUICK_DATA', matchId: item.match.id });
         if (dataResp.ok) {
@@ -980,7 +994,8 @@ async function fetchTodayMatches() {
       if (i % 2 === 1) await new Promise(r => setTimeout(r, 1000));
     }
     document.getElementById('batchAIBtn').disabled = false;
-    showAlert(collectAborted ? `⏹ 已停止，完成 ${doneCount} 场采集` : `✅ 全部 ${todayMatchItems.length} 场盘口数据采集完成`, 'success', 4000);
+    const skipNote = skippedFinished > 0 ? `，跳过 ${skippedFinished} 场已结束` : '';
+    showAlert(collectAborted ? `⏹ 已停止，完成 ${doneCount} 场采集` : `✅ 采集完成：${doneCount} 场${skipNote}`, 'success', 4000);
   } catch (e) {
     showAlert(`采集失败: ${e.message}`, 'error');
   } finally {
@@ -1026,7 +1041,11 @@ function renderDailyList() {
   if (filterTier) items = items.filter(it => it.match.leagueTier === filterTier);
 
   if (!items.length) {
-    el.innerHTML = `<div class="empty-state"><div class="emoji">📅</div><p>暂无比赛数据<br>点击"采集今日比赛"</p></div>`;
+    el.innerHTML = `<div class="empty-state"><div class="emoji">📅</div>
+      <p style="line-height:1.8">暂无今日比赛数据<br>
+      <span style="color:#8b949e;font-size:11px">① 点击"今日比赛"采集当天比赛列表<br>
+      ② 勾选感兴趣的比赛，点"采集选中"获取盘口数据<br>
+      ③ 勾选已采集的比赛，点"AI批量预测"获取AI分析</span></p></div>`;
     return;
   }
 
@@ -1048,13 +1067,19 @@ function renderDailyList() {
     const prof = item.profitability;
     const tierColor = tierColors[m.leagueTier] || '#8b949e';
     const scoreColor = prof?.score >= 65 ? '#3fb950' : prof?.score >= 45 ? '#f0883e' : '#8b949e';
-    const collectingLabel = !item.matchData ? '<span class="pill-text" style="color:#484f58;font-size:10px">未采集</span>' : '';
+    const isFinished = m.status === 'finished' || (m.score && /^\d+[-:]\d+$/.test(m.score.trim()));
+    const collectingLabel = !item.matchData
+      ? (isFinished
+          ? '<span class="pill-text" style="color:#484f58;font-size:10px;background:#21262d;padding:1px 5px;border-radius:3px">已结束</span>'
+          : '<span class="pill-text" style="color:#484f58;font-size:10px">未采集</span>')
+      : '';
     const checked = item.checked ? 'checked' : '';
+    const rowBg = isFinished ? 'background:#0d1117;opacity:0.55;' : '';
 
-    html += `<div class="data-section" style="margin-bottom:6px" data-match-id="${m.id}">
+    html += `<div class="data-section" style="margin-bottom:6px;${rowBg}" data-match-id="${m.id}">
       <div class="section-header daily-row" style="cursor:default;padding:6px 8px">
         <div class="daily-main">
-          <input type="checkbox" class="daily-check" data-id="${m.id}" ${checked} style="accent-color:#58a6ff;cursor:pointer;flex-shrink:0">
+          <input type="checkbox" class="daily-check" data-id="${m.id}" ${checked} ${isFinished ? 'disabled title="比赛已结束，无需采集"' : ''} style="accent-color:#58a6ff;cursor:${isFinished?'not-allowed':'pointer'};flex-shrink:0">
           <span class="pill-text" style="color:${tierColor};font-size:10px;background:${tierColor}22;padding:1px 5px;border-radius:3px">${escapeHtml(m.leagueTier)}</span>
           <span class="pill-text" style="color:#484f58;font-size:9px;font-family:monospace;letter-spacing:0.3px">ID:${escapeHtml(m.id)}</span>
           <span class="clip-text" style="font-size:11px;color:#8b949e;max-width:76px" title="${escapeHtml(m.league)}">${escapeHtml(m.league)}</span>
@@ -1130,6 +1155,13 @@ async function runBatchAI() {
     return;
   }
 
+  // 提前检查 API Key 配置
+  const settingsCheck = await chrome.storage.sync.get(['aiProvider', 'aiApiKey']);
+  if (!settingsCheck.aiApiKey && (settingsCheck.aiProvider || 'openai') !== 'custom') {
+    showAlert('⚠️ 请先在右上角 ⚙ 设置页面配置 AI API Key，否则无法进行AI分析', 'error', 8000);
+    return;
+  }
+
   setLoading('batchAIBtn', true);
   collectAborted = false;
   document.getElementById('stopCollectBtn').style.display = 'inline-flex';
@@ -1166,8 +1198,17 @@ async function runBatchAI() {
             console.log(`[Bet] ${m.home}vs${m.away} 提取到 ${betRecs.length} 条高价值建议`);
           }
           doneCount++;
+        } else if (resp.error) {
+          // 显示具体失败原因（包含API Key未配置等）
+          const errMsg = resp.error.includes('API Key')
+            ? `❌ AI未配置：请在 ⚙ 设置页配置API Key后重试`
+            : `❌ ${m.home} vs ${m.away} 分析失败: ${resp.error}`;
+          item.aiResult = { content: errMsg };
+          showAlert(errMsg, 'error', 6000);
         }
       } catch (e) {
+        const errMsg = `❌ ${m.home} vs ${m.away} 分析出错: ${e.message}`;
+        item.aiResult = { content: errMsg };
         console.warn(`[AI] 分析 ${m.id} 失败:`, e.message);
       }
 
