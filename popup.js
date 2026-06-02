@@ -121,24 +121,22 @@ async function loadServerMatchesToDaily() {
   try {
     const resp = await sendMsg({ type: 'LOAD_SERVER_MATCHES' });
     if (!resp?.ok || !resp.matches?.length) return;
-    todayMatchItems = resp.matches.map(m => {
-      const matchData = m.data || null;
-      return {
-        match: {
-          id: m.matchId,
-          league: m.league || '',
-          home: m.home || '',
-          away: m.away || '',
-          time: m.matchTime || '',
-          score: '',
-          status: 'upcoming',
-          leagueTier: m.league ? '' : '其他'
-        },
-        matchData,
-        profitability: null,
-        checked: false
-      };
-    });
+    todayMatchItems = resp.matches.map(m => ({
+      match: {
+        id: m.matchId,
+        league: m.league || '',
+        home: m.home || '',
+        away: m.away || '',
+        time: m.matchTime || '',
+        score: '',
+        status: 'upcoming',
+        leagueTier: m.leagueTier || '其他',
+        leaguePriority: m.leaguePriority || 0
+      },
+      matchData: m.data || null,
+      profitability: m.profitability || null,
+      checked: false
+    }));
     showAlert(`☁️ 已从服务器加载 ${todayMatchItems.length} 场比赛数据`, 'success', 3000);
     renderDailyList();
     document.getElementById('collectSelectedBtn').style.display = 'inline-flex';

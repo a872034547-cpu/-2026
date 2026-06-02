@@ -334,14 +334,26 @@ async function handleMessage(msg, sender, sendResponse) {
               const t = (m.matchTime || '').slice(0, 10);
               return t === today || t === tomorrow;
             })
-            .map(m => ({
-              matchId: String(m.matchId),
-              home: m.home || '',
-              away: m.away || '',
-              league: m.league || '',
-              matchTime: m.matchTime || '',
-              data: m.data || null
-            }));
+            .map(m => {
+              const data = m.data || null;
+              const info = (data?.analysis?.matchInfo) || {};
+              const league = m.league || info.league || '';
+              const home = m.home || info.home || '';
+              const away = m.away || info.away || '';
+              let profitability = null;
+              try { if (data) profitability = calcProfitabilityScore(data); } catch(e) {}
+              return {
+                matchId: String(m.matchId),
+                home,
+                away,
+                league,
+                matchTime: m.matchTime || '',
+                leaguePriority: getLeaguePriority(league),
+                leagueTier: getLiveTierLabel(league),
+                data,
+                profitability
+              };
+            });
           sendResponse({ ok: true, serverEnabled: true, matches });
         } catch (e) {
           sendResponse({ ok: false, error: e.message, matches: [] });
