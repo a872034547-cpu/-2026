@@ -3576,7 +3576,7 @@ async function publicApi(action, options = {}) {
     headers['X-Api-Key'] = settings.adminKey;
   }
 
-  const timeoutMs = options.timeout || 8000; // 默认8秒超时，防止卡死
+  const timeoutMs = options.timeout || 300000; // 默认5分钟超时，防止卡死
   const makeSignal = () => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
