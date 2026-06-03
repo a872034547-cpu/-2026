@@ -79,6 +79,13 @@ async function initializeApp() {
   initButtons();
   await loadMonitorList();
 
+  // 显示版本号
+  try {
+    const mf = chrome.runtime.getManifest();
+    const vb = document.getElementById('versionBadge');
+    if (vb && mf?.version) vb.textContent = 'v' + mf.version;
+  } catch (e) { /* 忽略 */ }
+
   // 管理员才显示同步按钮
   try {
     const perm = await sendMsg({ type: 'GET_BET_RECORDS' });
@@ -1467,7 +1474,19 @@ let betRecordsMeta = {
 async function loadDailyRecords() {
   const modeSwitch = document.getElementById('recordsModeSwitch');
   const forceLocal = modeSwitch ? modeSwitch.value === 'local' : false;
-  const resp = await sendMsg({ type: 'GET_BET_RECORDS', forceLocal });
+
+  // 自动重试：服务器同步失效时降级为离线缓存，最多重试2次
+  let resp = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      resp = await sendMsg({ type: 'GET_BET_RECORDS', forceLocal });
+      if (resp) break;
+    } catch (e) {
+      if (attempt === 1) resp = { records: [], offline: true, error: e.message };
+    }
+  }
+  if (!resp) resp = { records: [], offline: true, error: '无响应' };
+
   allBetRecords = resp.records || [];
   betRecordsMeta = {
     publicSyncEnabled: !!resp.publicSyncEnabled,
@@ -1581,17 +1600,19 @@ function renderDailyRecords() {
       <div class="records-table-wrap">
       <table class="records-table">
         <colgroup>
-          <col style="width:16%">
-          <col style="width:12%">
-          <col style="width:20%">
-          <col style="width:9%">
-          <col style="width:11%">
-          <col style="width:9%">
-          <col style="width:9%">
+          <col style="width:14%">
+          <col style="width:10%">
+          <col style="width:10%">
+          <col style="width:18%">
+          <col style="width:8%">
+          <col style="width:10%">
+          <col style="width:8%">
+          <col style="width:8%">
           <col style="width:14%">
         </colgroup>
         <thead><tr style="color:#8b949e;border-bottom:1px solid #30363d;font-size:10px">
           <th style="text-align:left">比赛</th>
+          <th style="text-align:left">时间</th>
           <th style="text-align:left">盘口</th>
           <th style="text-align:left">选项</th>
           <th style="text-align:center">赔率</th>
@@ -1608,9 +1629,12 @@ function renderDailyRecords() {
       const matchName = `${rec.matchHome}vs${rec.matchAway}`;
       const shortName = matchName.length > 10 ? matchName.slice(0, 10) + '…' : matchName;
       const safeId = rec.id.replace(/[^a-z0-9]/gi, '_');
+      const matchTime = rec.matchTime || rec.time || '';
+      const shortTime = matchTime.replace(/^\d{4}[\/\-]\d{1,2}[\/\-]/, '').slice(0, 11); // 去掉年份，保留月日时分
 
       html += `<tr style="border-bottom:1px solid #21262d">
-        <td class="clip-text" style="color:#c9d1d9" title="${escapeHtml(matchName)}">${escapeHtml(shortName)}</td>
+        <td class="clip-text" style="color:#c9d1d9;font-size:10px" title="${escapeHtml(matchName)}">${escapeHtml(shortName)}</td>
+        <td class="clip-text" style="color:#8b949e;font-size:10px" title="${escapeHtml(matchTime)}">${escapeHtml(shortTime||'-')}</td>
         <td class="clip-text" style="color:#8b949e;font-size:10px" title="${escapeHtml(rec.betType)}">${escapeHtml(rec.betType)}</td>
         <td class="clip-text" style="color:#e6edf3;font-weight:600" title="${escapeHtml(rec.selection)}">${escapeHtml(rec.selection)}</td>
         <td style="text-align:center;color:#8b949e;font-size:10px">${escapeHtml(rec.odds||'-')}</td>
