@@ -1600,19 +1600,21 @@ function renderDailyRecords() {
       <div class="records-table-wrap">
       <table class="records-table">
         <colgroup>
-          <col style="width:14%">
-          <col style="width:10%">
-          <col style="width:10%">
-          <col style="width:18%">
+          <col style="width:11%">
+          <col style="width:11%">
+          <col style="width:13%">
+          <col style="width:9%">
+          <col style="width:19%">
+          <col style="width:8%">
+          <col style="width:9%">
+          <col style="width:8%">
           <col style="width:8%">
           <col style="width:10%">
-          <col style="width:8%">
-          <col style="width:8%">
-          <col style="width:14%">
         </colgroup>
         <thead><tr style="color:#8b949e;border-bottom:1px solid #30363d;font-size:10px">
-          <th style="text-align:left">比赛</th>
-          <th style="text-align:left">时间</th>
+          <th style="text-align:left">主队</th>
+          <th style="text-align:left">客队</th>
+          <th style="text-align:left">联赛/时间</th>
           <th style="text-align:left">盘口</th>
           <th style="text-align:left">选项</th>
           <th style="text-align:center">赔率</th>
@@ -1627,14 +1629,18 @@ function renderDailyRecords() {
       const resultColor = resultColorMap[rec.betResult] || '#484f58';
       const valueColor = rec.valueLevel === '高价值' ? '#f0883e' : '#58a6ff';
       const matchName = `${rec.matchHome}vs${rec.matchAway}`;
-      const shortName = matchName.length > 10 ? matchName.slice(0, 10) + '…' : matchName;
+      const shortHome = (rec.matchHome||'').length > 6 ? rec.matchHome.slice(0,6)+'…' : (rec.matchHome||'-');
+      const shortAway = (rec.matchAway||'').length > 6 ? rec.matchAway.slice(0,6)+'…' : (rec.matchAway||'-');
       const safeId = rec.id.replace(/[^a-z0-9]/gi, '_');
       const matchTime = rec.matchTime || rec.time || '';
       const shortTime = matchTime.replace(/^\d{4}[\/\-]\d{1,2}[\/\-]/, '').slice(0, 11); // 去掉年份，保留月日时分
+      const league = rec.matchLeague || '';
+      const shortLeague = league.length > 8 ? league.slice(0,8)+'…' : league;
 
       html += `<tr style="border-bottom:1px solid #21262d">
-        <td class="clip-text" style="color:#c9d1d9;font-size:10px" title="${escapeHtml(matchName)}">${escapeHtml(shortName)}</td>
-        <td class="clip-text" style="color:#8b949e;font-size:10px" title="${escapeHtml(matchTime)}">${escapeHtml(shortTime||'-')}</td>
+        <td class="clip-text" style="color:#c9d1d9;font-size:10px" title="${escapeHtml(rec.matchHome||'')}">${escapeHtml(shortHome)}</td>
+        <td class="clip-text" style="color:#c9d1d9;font-size:10px" title="${escapeHtml(rec.matchAway||'')}">${escapeHtml(shortAway)}</td>
+        <td style="font-size:10px;line-height:1.4" title="${escapeHtml(league+' '+matchTime)}"><div style="color:#58a6ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(shortLeague||'-')}</div><div style="color:#484f58">${escapeHtml(shortTime||'-')}</div></td>
         <td class="clip-text" style="color:#8b949e;font-size:10px" title="${escapeHtml(rec.betType)}">${escapeHtml(rec.betType)}</td>
         <td class="clip-text" style="color:#e6edf3;font-weight:600" title="${escapeHtml(rec.selection)}">${escapeHtml(rec.selection)}</td>
         <td style="text-align:center;color:#8b949e;font-size:10px">${escapeHtml(rec.odds||'-')}</td>
