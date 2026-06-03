@@ -3576,23 +3576,38 @@ async function publicApi(action, options = {}) {
     headers['X-Api-Key'] = settings.adminKey;
   }
 
+  const timeoutMs = options.timeout || 8000; // 默认8秒超时，防止卡死
+  const makeSignal = () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    return { signal: ctrl.signal, clear: () => clearTimeout(t) };
+  };
+
   let fetchUrl = buildPublicApiUrl(settings.apiUrl, action, options.params);
   let resp;
   try {
-    resp = await fetch(fetchUrl, {
-      method: options.method || 'GET',
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body)
-    });
-  } catch (fetchErr) {
-    // https 失败时自动降级 http 重试一次
-    if (fetchUrl.startsWith('https://')) {
-      fetchUrl = fetchUrl.replace(/^https:\/\//, 'http://');
+    const { signal, clear } = makeSignal();
+    try {
       resp = await fetch(fetchUrl, {
         method: options.method || 'GET',
         headers,
+        signal,
         body: options.body === undefined ? undefined : JSON.stringify(options.body)
       });
+    } finally { clear(); }
+  } catch (fetchErr) {
+    // https 失败时自动降级 http 重试一次（含新超时）
+    if (fetchUrl.startsWith('https://')) {
+      fetchUrl = fetchUrl.replace(/^https:\/\//, 'http://');
+      const { signal, clear } = makeSignal();
+      try {
+        resp = await fetch(fetchUrl, {
+          method: options.method || 'GET',
+          headers,
+          signal,
+          body: options.body === undefined ? undefined : JSON.stringify(options.body)
+        });
+      } finally { clear(); }
     } else {
       throw fetchErr;
     }
